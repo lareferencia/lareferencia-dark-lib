@@ -1,5 +1,7 @@
 package org.lareferencia.core.dark.contract;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,17 +39,25 @@ public class DarkService {
     public static final int EXPECTED_SIZE_OF_TOPICS = 3;
 
 
-    @Value("#{blockchain.url}")
-    String blockChainUrl;
+    @Getter
+    @Setter
+    @Value("${blockchain.url}")
+    private String blockChainUrl;
 
-    @Value("#{blockchain.account-private-key}")
-    String privateKey;
+    @Setter
+    @Getter
+    @Value("${blockchain.account-private-key}")
+    private String privateKey;
 
-    @Value("#{blockchain.chain-id}")
-    Long chainId;
+    @Setter
+    @Getter
+    @Value("${blockchain.chain-id}")
+    private Long chainId;
 
-    @Value("#{blockchain.contract-address.generate-pid}")
-    String addressOfNewPidContract;
+    @Setter
+    @Getter
+    @Value("${blockchain.contract-address.generate-pid}")
+    private String addressOfNewPidContract;
 
     Web3j blockChainProxy;
 
@@ -152,5 +162,6 @@ public class DarkService {
     private EthBlock.Block getCurrentBlock() throws IOException {
         return blockChainProxy.ethGetBlockByNumber(DefaultBlockParameterName.LATEST, false).send().getBlock();
     }
+
 
 }
