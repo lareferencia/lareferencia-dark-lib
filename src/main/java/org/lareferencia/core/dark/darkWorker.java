@@ -43,7 +43,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
-
 	@Autowired
 	private IMetadataRecordStoreService metadataStoreService;
 
