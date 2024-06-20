@@ -29,12 +29,12 @@
 	<artifactId>lareferencia-dark-lib</artifactId>
 	<name>LA Referencia dARK library</name>
 	<description>LA Referencia library dARK identifier</description>
-	<version>4.2.2</version>
+	<version>4.2.3</version>
 
 	<parent>
 		<groupId>org.lareferencia</groupId>
 		<artifactId>lareferencia-parent</artifactId>
-		<version>4.2.2</version>
+		<version>4.2.3</version>
 	</parent>
 
 
@@ -44,8 +44,15 @@
 		<dependency>
 			<groupId>org.lareferencia</groupId>
 			<artifactId>lareferencia-core-lib</artifactId>
-			<version>4.2.2</version>
+			<version>4.2.3</version>
 		</dependency>
-		
-   	</dependencies>
+
+		<dependency>
+			<groupId>org.web3j</groupId>
+			<artifactId>core</artifactId>
+			<version>4.5.18</version>
+		</dependency>
+
+
+	</dependencies>
    </project>
