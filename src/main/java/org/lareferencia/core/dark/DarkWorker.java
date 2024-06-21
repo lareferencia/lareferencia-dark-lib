@@ -24,7 +24,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
 import org.lareferencia.backend.repositories.jpa.OAIBitstreamRepository;
-import org.lareferencia.backend.repositories.jpa.TransformerRepository;
 import org.lareferencia.core.dark.contract.DarkPidVo;
 import org.lareferencia.core.dark.contract.DarkService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
@@ -51,9 +50,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     private Long snapshotId;
 
     @Autowired
-    private OAIBitstreamRepository bitstreamRepository;
-
-    @Autowired
     private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
 
     @Autowired
@@ -71,18 +67,18 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
         oaiIdentifiersWithoutDarkId = new HashSet<>();
         // busca el lgk
-        snapshotId = metadataStoreService.findLastGoodKnownSnapshot(runningContext.getNetwork());
+        snapshotId = metadataStoreService.findLastHarvestingSnapshot(runningContext.getNetwork());
 
         if (snapshotId != null) { // solo si existe un lgk
 
             logger.debug("dARK PID processing: " + snapshotId);
             // establece una paginator para recorrer los registros que sean validos
-            this.setPaginator(metadataStoreService.getValidRecordsPaginator(snapshotId));
+            this.setPaginator(metadataStoreService.getUntestedRecordsPaginator(snapshotId));
 
 
         } else {
 
-            logger.warn("No hay LGKSnapshot de la red: " + runningContext.getNetwork().getAcronym());
+            logger.warn("There are not harvested snapshots: " + runningContext.getNetwork().getAcronym());
             this.setPaginator(null);
             this.stop();
         }
