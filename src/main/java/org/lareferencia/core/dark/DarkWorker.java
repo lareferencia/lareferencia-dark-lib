@@ -96,11 +96,11 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void processItem(OAIRecord record) {
 
-        logger.debug("Getting dARK for: " + record.getId());
-
-        // FIXME: Query goes here
-        oaiIdentifiersWithoutDarkId.add(record.getIdentifier());
-
+        oaiIdentifierDarkRepository.findByOaiIdentifier(record.getIdentifier())
+                .ifPresent(oaiIdentifierDark -> {
+                    logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", record.getId());
+                    oaiIdentifiersWithoutDarkId.add(oaiIdentifierDark.getOaiIdentifier());
+                });
 
     }
 
@@ -112,20 +112,24 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void postRun() {
 
-        if (oaiIdentifiersWithoutDarkId != null && !oaiIdentifiersWithoutDarkId.isEmpty()) {
-
-            Queue<DarkPidVo> availableDarkPids = new ArrayBlockingQueue<>(10000);
-            int ammountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiIdentifiersWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
-
-            while (ammountOfTimesToRequestBulkPids-- != 0) {
-                logger.debug("Step [{}] - Requesting dArk pid in bulk mode", ammountOfTimesToRequestBulkPids);
-                availableDarkPids.addAll(darkService.getPidsInBulkMode());
-            }
-
-            oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer ->
-                    oaiIdentifierDarkRepository.save(new OAIIdentifierDark(oaiIdentificer, availableDarkPids.poll().pidHash)));
+        boolean hasOaiWithoutDarkIdAssociated = oaiIdentifiersWithoutDarkId != null && !oaiIdentifiersWithoutDarkId.isEmpty();
+        if (hasOaiWithoutDarkIdAssociated) {
+            persistAssociationBetweenDarkIdAndOaiIdentifier();
         }
 
+    }
+
+    private void persistAssociationBetweenDarkIdAndOaiIdentifier() {
+        final Queue<DarkPidVo> availableDarkPids = new ArrayBlockingQueue<>(10000);
+        int amountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiIdentifiersWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
+
+        while (amountOfTimesToRequestBulkPids-- != 0) {
+            logger.debug("Step [{}] - Requesting dArk pid in bulk mode", amountOfTimesToRequestBulkPids);
+            availableDarkPids.addAll(darkService.getPidsInBulkMode());
+        }
+
+        oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer ->
+                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(oaiIdentificer, availableDarkPids.poll().pidHash)));
     }
 
 }

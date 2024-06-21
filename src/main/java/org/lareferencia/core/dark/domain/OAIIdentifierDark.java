@@ -29,6 +29,8 @@ import javax.persistence.Id;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDateTime;
+
 
 /**
  */
@@ -39,7 +41,7 @@ public class OAIIdentifierDark {
 	
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	protected Long id = null;
+	private Long id = null;
 
 	@Column(nullable = false)
 	private String oaiIdentifier;
@@ -48,7 +50,10 @@ public class OAIIdentifierDark {
 	private String darkIdentifier;
 
 	@Column(nullable = false)
-	protected Boolean metadata = false;
+	private Boolean metadata = false;
+
+	@Column(nullable = false)
+	private LocalDateTime datestamp;
 
 	public OAIIdentifierDark(String oaiIdentifier, String darkIdentifier) {
 		this.oaiIdentifier = oaiIdentifier;
