@@ -10,12 +10,8 @@ import java.util.Optional;
 @Service
 public class DarkIdentifierStoreService {
 
-    private final OAIIdentifierDarkRepository repository;
-
     @Autowired
-    public DarkIdentifierStoreService(OAIIdentifierDarkRepository repository) {
-        this.repository = repository;
-    }
+    private OAIIdentifierDarkRepository repository;
 
     public OAIIdentifierDark addDarkIdentifier(String oaiIdentifier, String darkIdentifier) {
         OAIIdentifierDark newPair = new OAIIdentifierDark(oaiIdentifier, darkIdentifier);

@@ -58,6 +58,7 @@ public class OAIIdentifierDark {
 	public OAIIdentifierDark(String oaiIdentifier, String darkIdentifier) {
 		this.oaiIdentifier = oaiIdentifier;
 		this.darkIdentifier = darkIdentifier;
+		this.datestamp = LocalDateTime.now();
 	}
 
 	public OAIIdentifierDark() {}
