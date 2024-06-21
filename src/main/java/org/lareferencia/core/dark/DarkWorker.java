@@ -24,8 +24,11 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
 import org.lareferencia.backend.repositories.jpa.OAIBitstreamRepository;
+import org.lareferencia.backend.repositories.jpa.TransformerRepository;
 import org.lareferencia.core.dark.contract.DarkPidVo;
 import org.lareferencia.core.dark.contract.DarkService;
+import org.lareferencia.core.dark.domain.OAIIdentifierDark;
+import org.lareferencia.core.dark.repositories.OAIIdentifierDarkRepository;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
@@ -49,6 +52,9 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Autowired
     private OAIBitstreamRepository bitstreamRepository;
+
+    @Autowired
+    private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
 
     @Autowired
     private DarkService darkService;
@@ -112,14 +118,12 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             int ammountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiIdentifiersWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
 
             while (ammountOfTimesToRequestBulkPids-- != 0) {
-                logger.debug("[{}] requesting dArk pid in bulk mode", ammountOfTimesToRequestBulkPids);
+                logger.debug("Step [{}] - Requesting dArk pid in bulk mode", ammountOfTimesToRequestBulkPids);
                 availableDarkPids.addAll(darkService.getPidsInBulkMode());
             }
 
-            oaiIdentifiersWithoutDarkId.forEach(s -> {
-                // save
-                DarkPidVo darkPidVo = availableDarkPids.poll();
-            });
+            oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer ->
+                    oaiIdentifierDarkRepository.save(new OAIIdentifierDark(oaiIdentificer, availableDarkPids.poll().pidHash)));
         }
 
     }
