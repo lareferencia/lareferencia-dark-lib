@@ -50,15 +50,19 @@ public class OAIIdentifierDark {
 	private String darkIdentifier;
 
 	@Column(nullable = false)
+	private String rawDarkIdentifier;
+
+	@Column(nullable = false)
 	private Boolean metadata = false;
 
 	@Column(nullable = false)
 	private LocalDateTime datestamp;
 
-	public OAIIdentifierDark(String oaiIdentifier, String darkIdentifier) {
+	public OAIIdentifierDark(String oaiIdentifier, String darkIdentifier, String rawDarkIdentifier) {
 		this.oaiIdentifier = oaiIdentifier;
 		this.darkIdentifier = darkIdentifier;
 		this.datestamp = LocalDateTime.now();
+		this.rawDarkIdentifier = rawDarkIdentifier;
 	}
 
 	public OAIIdentifierDark() {}

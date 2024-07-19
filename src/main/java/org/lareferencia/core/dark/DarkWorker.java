@@ -34,6 +34,7 @@ import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -92,11 +93,11 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void processItem(OAIRecord record) {
 
-        oaiIdentifierDarkRepository.findByOaiIdentifier(record.getIdentifier())
-                .ifPresent(oaiIdentifierDark -> {
-                    logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", record.getId());
-                    oaiIdentifiersWithoutDarkId.add(oaiIdentifierDark.getOaiIdentifier());
-                });
+        Optional<OAIIdentifierDark> byOaiIdentifier = oaiIdentifierDarkRepository.findByOaiIdentifier(record.getIdentifier());
+        if (!byOaiIdentifier.isPresent()) {
+            logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", record.getId());
+            oaiIdentifiersWithoutDarkId.add(record.getIdentifier());
+        }
 
     }
 
@@ -124,8 +125,13 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             availableDarkPids.addAll(darkService.getPidsInBulkMode());
         }
 
-        oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer ->
-                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(oaiIdentificer, availableDarkPids.poll().pidHash)));
+        oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer -> {
+            DarkPidVo darkPidVo = availableDarkPids.poll();
+            oaiIdentifierDarkRepository.save(
+                            new OAIIdentifierDark(oaiIdentificer,
+                            darkService.formatPid(darkPidVo.pidHash), darkPidVo.pidHash));
+                }
+        );
     }
 
 }

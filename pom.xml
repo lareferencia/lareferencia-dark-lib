@@ -30,6 +30,9 @@
 	<name>LA Referencia dARK library</name>
 	<description>LA Referencia library dARK identifier</description>
 	<version>4.2.3</version>
+	<properties>
+		<web3j.version>4.9.8-hotfix</web3j.version>
+	</properties>
 
 	<parent>
 		<groupId>org.lareferencia</groupId>
@@ -45,12 +48,33 @@
 			<groupId>org.lareferencia</groupId>
 			<artifactId>lareferencia-core-lib</artifactId>
 			<version>4.2.3</version>
+			<scope>provided</scope>
 		</dependency>
 
 		<dependency>
 			<groupId>org.web3j</groupId>
 			<artifactId>core</artifactId>
-			<version>4.5.18</version>
+			<version>${web3j.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.web3j</groupId>
+			<artifactId>contracts</artifactId>
+			<version>${web3j.version}</version>
+		</dependency>
+
+
+		<dependency>
+			<groupId>org.web3j</groupId>
+			<artifactId>utils</artifactId>
+			<version>${web3j.version}</version>
+		</dependency>
+
+
+		<dependency>
+			<groupId>org.web3j</groupId>
+			<artifactId>abi</artifactId>
+			<version>${web3j.version}</version>
 		</dependency>
 
 

@@ -19,13 +19,16 @@ import org.web3j.protocol.core.methods.response.EthSendTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.protocol.exceptions.TransactionException;
 import org.web3j.protocol.http.HttpService;
+import org.web3j.tx.RawTransactionManager;
 import org.web3j.tx.TransactionManager;
+import org.web3j.tx.gas.DefaultGasProvider;
 import org.web3j.tx.response.PollingTransactionReceiptProcessor;
 import org.web3j.tx.response.TransactionReceiptProcessor;
 import org.web3j.utils.Numeric;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -37,6 +40,8 @@ public class DarkService {
     private static final Logger LOG = LogManager.getLogger(DarkService.class);
     public static final int DARKPID_POSITION = 1;
     public static final int EXPECTED_SIZE_OF_TOPICS = 3;
+    public static final int FIRST_BYTE_OF_ARK = 256;
+    public static final int LAST_BYTE_OF_ARK = 274;
 
 
     @Getter
@@ -58,6 +63,12 @@ public class DarkService {
     @Getter
     @Value("${blockchain.contract-address.generate-pid}")
     private String addressOfNewPidContract;
+
+    @Setter
+    @Getter
+    @Value("${blockchain.contract-address.format-pid}")
+    private String addressOfFormatPid;
+
 
     Web3j blockChainProxy;
 
@@ -83,7 +94,6 @@ public class DarkService {
             EthSendTransaction bulkAssignTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
 
             TransactionReceipt receipt = sendTransactionAndWaitForReceipt(bulkAssignTransaction);
-
             return receipt.getLogs().stream()
                     .filter(log -> log.getTopics() != null && log.getTopics().size() == EXPECTED_SIZE_OF_TOPICS)
                     .map(log -> log.getTopics().get(DARKPID_POSITION))
@@ -95,6 +105,27 @@ public class DarkService {
             throw new RuntimeException(e);
         }
     }
+
+
+    public String formatPid(String pidHashString) {
+
+        try {
+
+            Credentials credentials = Credentials.create(privateKey);
+            PidDB pidDB = new PidDB(addressOfFormatPid, blockChainProxy,
+                    new RawTransactionManager(blockChainProxy, credentials), new DefaultGasProvider());
+
+            String formattedPidResponse = pidDB.get(Numeric.hexStringToByteArray(pidHashString)).send();
+            byte[] responseConvertedToBytes = Numeric.hexStringToByteArray(formattedPidResponse);
+
+            return new StringBuilder("ark:/")
+                    .append(new String(Arrays.copyOfRange(responseConvertedToBytes, FIRST_BYTE_OF_ARK, LAST_BYTE_OF_ARK), StandardCharsets.UTF_8)).toString();
+
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 
     public void associateDarkPidWithUrl(String darkId, String url) {
         try {
