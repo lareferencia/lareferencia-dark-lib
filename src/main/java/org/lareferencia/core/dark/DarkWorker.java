@@ -23,7 +23,6 @@ package org.lareferencia.core.dark;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.backend.repositories.jpa.OAIBitstreamRepository;
 import org.lareferencia.core.dark.contract.DarkPidVo;
 import org.lareferencia.core.dark.contract.DarkService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
@@ -56,7 +55,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Autowired
     private DarkService darkService;
 
-    private Set<String> oaiIdentifiersWithoutDarkId;
+    private Set<OAIRecord> oaiRecordWithoutDarkId;
 
     public DarkWorker() {
         super();
@@ -66,7 +65,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void preRun() {
 
-        oaiIdentifiersWithoutDarkId = new HashSet<>();
+        oaiRecordWithoutDarkId = new HashSet<>();
         // busca el lgk
         snapshotId = metadataStoreService.findLastHarvestingSnapshot(runningContext.getNetwork());
 
@@ -94,9 +93,10 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     public void processItem(OAIRecord record) {
 
         Optional<OAIIdentifierDark> byOaiIdentifier = oaiIdentifierDarkRepository.findByOaiIdentifier(record.getIdentifier());
+
         if (!byOaiIdentifier.isPresent()) {
             logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", record.getId());
-            oaiIdentifiersWithoutDarkId.add(record.getIdentifier());
+            oaiRecordWithoutDarkId.add(record);
         }
 
     }
@@ -109,7 +109,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void postRun() {
 
-        boolean hasOaiWithoutDarkIdAssociated = oaiIdentifiersWithoutDarkId != null && !oaiIdentifiersWithoutDarkId.isEmpty();
+        boolean hasOaiWithoutDarkIdAssociated = oaiRecordWithoutDarkId != null && !oaiRecordWithoutDarkId.isEmpty();
         if (hasOaiWithoutDarkIdAssociated) {
             persistAssociationBetweenDarkIdAndOaiIdentifier();
         }
@@ -118,17 +118,17 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     private void persistAssociationBetweenDarkIdAndOaiIdentifier() {
         final Queue<DarkPidVo> availableDarkPids = new ArrayBlockingQueue<>(10000);
-        int amountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiIdentifiersWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
+        int amountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiRecordWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
 
         while (amountOfTimesToRequestBulkPids-- != 0) {
             logger.debug("Step [{}] - Requesting dArk pid in bulk mode", amountOfTimesToRequestBulkPids);
             availableDarkPids.addAll(darkService.getPidsInBulkMode());
         }
 
-        oaiIdentifiersWithoutDarkId.forEach(oaiIdentificer -> {
+        oaiRecordWithoutDarkId.forEach(oaiRecord -> {
             DarkPidVo darkPidVo = availableDarkPids.poll();
             oaiIdentifierDarkRepository.save(
-                            new OAIIdentifierDark(oaiIdentificer,
+                            new OAIIdentifierDark(oaiRecord.getIdentifier(),
                             darkService.formatPid(darkPidVo.pidHash), darkPidVo.pidHash));
                 }
         );
