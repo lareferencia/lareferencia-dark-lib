@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.lareferencia.core.dark.vo.DarkId;
 import org.springframework.beans.factory.annotation.Value;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.TypeReference;
@@ -81,7 +82,7 @@ public class DarkService {
     }
 
 
-    public List<DarkPidVo> getPidsInBulkMode() {
+    public List<DarkId> getPidsInBulkMode() {
 
         try {
 
@@ -97,7 +98,7 @@ public class DarkService {
             return receipt.getLogs().stream()
                     .filter(log -> log.getTopics() != null && log.getTopics().size() == EXPECTED_SIZE_OF_TOPICS)
                     .map(log -> log.getTopics().get(DARKPID_POSITION))
-                    .map(darkPid -> new DarkPidVo(darkPid)).collect(Collectors.toList());
+                    .map(darkPid -> new DarkId(darkPid)).collect(Collectors.toList());
 
         } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {
             LOG.error(e);
@@ -107,7 +108,7 @@ public class DarkService {
     }
 
 
-    public String formatPid(String pidHashString) {
+    public String formatPid(byte[] pidHash) {
 
         try {
 
@@ -115,7 +116,7 @@ public class DarkService {
             PidDB pidDB = new PidDB(addressOfFormatPid, blockChainProxy,
                     new RawTransactionManager(blockChainProxy, credentials), new DefaultGasProvider());
 
-            String formattedPidResponse = pidDB.get(Numeric.hexStringToByteArray(pidHashString)).send();
+            String formattedPidResponse = pidDB.get(pidHash).send();
             byte[] responseConvertedToBytes = Numeric.hexStringToByteArray(formattedPidResponse);
 
             return new StringBuilder("ark:/")
@@ -127,11 +128,11 @@ public class DarkService {
     }
 
 
-    public void associateDarkPidWithUrl(String darkId, String url) {
+    public void associateDarkPidWithUrl(byte[] pid_hash, String url) {
         try {
             Credentials credentials = Credentials.create(privateKey);
             String assignId = econdeFunction("set_url",
-                    Arrays.<Type>asList(new org.web3j.abi.datatypes.generated.Bytes32(darkId.getBytes()),
+                    Arrays.<Type>asList(new org.web3j.abi.datatypes.generated.Bytes32(pid_hash),
                             new org.web3j.abi.datatypes.Utf8String(url)),
                     Collections.<TypeReference<?>>emptyList());
 

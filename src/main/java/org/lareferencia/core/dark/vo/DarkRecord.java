@@ -1,20 +1,32 @@
 package org.lareferencia.core.dark.vo;
 
+import lombok.Getter;
 import org.lareferencia.backend.domain.OAIRecord;
+import org.lareferencia.core.metadata.OAIRecordMetadata;
 
 import java.util.List;
 
+@Getter
 public class DarkRecord {
 
-    String url;
-    List<String> authors;
+    private DarkId darkId;
+    private OAIRecord oaiRecord;
+    private OAIRecordMetadata oaiRecordMetadata;
+    private String url;
+    private List<String> authors;
 
-    String title;
-    String darkId;
-    String oaiId;
-    String year;
+    private String title;
+    private String oaiIdentifier;
+    private String year;
 
-    public DarkRecord(OAIRecord oaiRecord) {
+
+    public DarkRecord(OAIRecord oaiRecord, OAIRecordMetadata oaiRecordMetadata, DarkId darkId) {
+        this.oaiRecord = oaiRecord;
+        this.oaiIdentifier = oaiRecord.getIdentifier();
+        this.oaiRecordMetadata = oaiRecordMetadata;
+        this.darkId = darkId;
+        this.url = oaiRecordMetadata.getFieldOcurrences("dc.identifier.none").stream().filter(identifier -> identifier.startsWith("http://") || identifier.startsWith("https://")).findFirst().get();
+        this.title = oaiRecordMetadata.getFieldValue("dc.title.none");
 
     }
 

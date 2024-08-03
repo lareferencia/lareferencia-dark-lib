@@ -23,20 +23,21 @@ package org.lareferencia.core.dark;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.core.dark.contract.DarkPidVo;
+import org.lareferencia.core.dark.vo.DarkId;
 import org.lareferencia.core.dark.contract.DarkService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
 import org.lareferencia.core.dark.repositories.OAIIdentifierDarkRepository;
+import org.lareferencia.core.dark.vo.DarkRecord;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
+import org.lareferencia.core.metadata.MetadataRecordStoreException;
+import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.stream.Collectors;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
@@ -111,27 +112,50 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
         boolean hasOaiWithoutDarkIdAssociated = oaiRecordWithoutDarkId != null && !oaiRecordWithoutDarkId.isEmpty();
         if (hasOaiWithoutDarkIdAssociated) {
-            persistAssociationBetweenDarkIdAndOaiIdentifier();
+            final Queue<DarkId> availableDarkPids = requestDarkPidsToBlockChain();
+            List<DarkRecord> darkRecords = createDarkRecord(availableDarkPids);
+            persistDarkIdToOAIIdentifier(darkRecords);
+
+            darkRecords.stream().forEach(darkRecord ->
+                    darkService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl()));
+
         }
 
     }
 
-    private void persistAssociationBetweenDarkIdAndOaiIdentifier() {
-        final Queue<DarkPidVo> availableDarkPids = new ArrayBlockingQueue<>(10000);
+
+    private void persistDarkIdToOAIIdentifier(List<DarkRecord> darkRecords) {
+        darkRecords.forEach(darkRecord ->
+                oaiIdentifierDarkRepository.save(
+                        new OAIIdentifierDark(darkRecord.getOaiIdentifier(),
+                                darkService.formatPid(
+                                        darkRecord.getDarkId().getPidHashAsByteArray()),
+                                darkRecord.getDarkId().getPidHashAsString())
+                ));
+    }
+
+    private List<DarkRecord> createDarkRecord(final Queue<DarkId> availableDarkPids) {
+
+        return oaiRecordWithoutDarkId.stream().map(
+                oaiRecord -> {
+                    try {
+                        return new DarkRecord(oaiRecord, metadataStoreService.getOriginalMetadata(oaiRecord), availableDarkPids.poll());
+                    } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
+                        throw new RuntimeException(e);
+                    }
+                }).collect(Collectors.toList());
+
+    }
+
+    private Queue<DarkId> requestDarkPidsToBlockChain() {
+        final Queue<DarkId> availableDarkPids = new ArrayBlockingQueue<>(10000);
         int amountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiRecordWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
 
         while (amountOfTimesToRequestBulkPids-- != 0) {
             logger.debug("Step [{}] - Requesting dArk pid in bulk mode", amountOfTimesToRequestBulkPids);
             availableDarkPids.addAll(darkService.getPidsInBulkMode());
         }
-
-        oaiRecordWithoutDarkId.forEach(oaiRecord -> {
-            DarkPidVo darkPidVo = availableDarkPids.poll();
-            oaiIdentifierDarkRepository.save(
-                            new OAIIdentifierDark(oaiRecord.getIdentifier(),
-                            darkService.formatPid(darkPidVo.pidHash), darkPidVo.pidHash));
-                }
-        );
+        return availableDarkPids;
     }
 
 }

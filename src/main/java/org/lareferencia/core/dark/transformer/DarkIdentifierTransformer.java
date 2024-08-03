@@ -21,33 +21,27 @@
 
 package org.lareferencia.core.dark.transformer;
 
-import lombok.Getter;
 import lombok.Setter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.lareferencia.backend.domain.Network;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.core.dark.contract.DarkService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
 import org.lareferencia.core.dark.repositories.OAIIdentifierDarkRepository;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.validation.AbstractTransformerRule;
 import org.lareferencia.core.validation.ValidationException;
-import org.springframework.beans.factory.BeanFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
-public class AddDarkIdentifier extends AbstractTransformerRule {
+public class DarkIdentifierTransformer extends AbstractTransformerRule {
 
-    private static final Logger LOG = LogManager.getLogger(AddDarkIdentifier.class);
+    private static final Logger LOG = LogManager.getLogger(DarkIdentifierTransformer.class);
 
     @Setter
     String targetFieldName;
 
-    public AddDarkIdentifier() {
+    public DarkIdentifierTransformer() {
     }
 
     @Override
