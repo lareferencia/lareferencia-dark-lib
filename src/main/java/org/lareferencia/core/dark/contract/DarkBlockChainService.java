@@ -5,11 +5,13 @@ import lombok.Setter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.core.dark.vo.DarkId;
+import org.lareferencia.core.worker.WorkerRuntimeException;
 import org.springframework.beans.factory.annotation.Value;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.TypeReference;
 import org.web3j.abi.datatypes.Function;
 import org.web3j.abi.datatypes.Type;
+import org.web3j.abi.datatypes.generated.Bytes32;
 import org.web3j.crypto.Credentials;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.crypto.TransactionEncoder;
@@ -30,19 +32,21 @@ import org.web3j.utils.Numeric;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
-public class DarkService {
+public class DarkBlockChainService {
 
-    private static final Logger LOG = LogManager.getLogger(DarkService.class);
+    private static final Logger LOG = LogManager.getLogger(DarkBlockChainService.class);
     public static final int DARKPID_POSITION = 1;
     public static final int EXPECTED_SIZE_OF_TOPICS = 3;
     public static final int FIRST_BYTE_OF_ARK = 256;
     public static final int LAST_BYTE_OF_ARK = 274;
+    public static final String SUCCESS_STATUS = "0x1";
 
 
     @Getter
@@ -128,11 +132,12 @@ public class DarkService {
     }
 
 
-    public void associateDarkPidWithUrl(byte[] pid_hash, String url) {
+    public void associateDarkPidWithUrl(byte[] pid_hash, String url) throws WorkerRuntimeException {
         try {
             Credentials credentials = Credentials.create(privateKey);
+            Bytes32 bytes32 = new Bytes32(pid_hash);
             String assignId = econdeFunction("set_url",
-                    Arrays.<Type>asList(new org.web3j.abi.datatypes.generated.Bytes32(pid_hash),
+                    Arrays.<Type>asList(bytes32,
                             new org.web3j.abi.datatypes.Utf8String(url)),
                     Collections.<TypeReference<?>>emptyList());
 
@@ -140,13 +145,20 @@ public class DarkService {
             String signedMessage = signTransaction(transaction, credentials);
 
             EthSendTransaction bulkAssignTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
-
+            // TODO: IS THERE A WAY TO KNOW IF THE ASSOCIATION WAS CORRECT. WITHOUT THE NEED OF ANOTHER GET
             TransactionReceipt receipt = sendTransactionAndWaitForReceipt(bulkAssignTransaction);
-
             LOG.info("Receipt recieved [{}]", receipt.getTransactionHash());
 
-        } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {
-            throw new RuntimeException(e);
+
+            boolean transactionSucceed = receipt.getStatus().equals(SUCCESS_STATUS);
+            if(!transactionSucceed) {
+                throw new WorkerRuntimeException(
+                        MessageFormat.format("The URL for the DarkId {0} wasnt sent to the block chain",
+                                bytes32.toString()));
+            }
+
+        } catch (ExecutionException | InterruptedException | IOException | TransactionException | WorkerRuntimeException e) {
+            throw new WorkerRuntimeException(e.getMessage());
         }
 
     }

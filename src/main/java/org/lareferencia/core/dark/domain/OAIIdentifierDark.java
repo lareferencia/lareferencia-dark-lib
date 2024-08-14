@@ -28,6 +28,7 @@ import javax.persistence.Id;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.lareferencia.core.dark.vo.DarkRecord;
 
 import java.time.LocalDateTime;
 
@@ -38,16 +39,13 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 public class OAIIdentifierDark {
-	
+
 	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private Long id = null;
+	@Column(nullable = false)
+	private String darkIdentifier;
 
 	@Column(nullable = false)
 	private String oaiIdentifier;
-
-	@Column(nullable = false)
-	private String darkIdentifier;
 
 	@Column(nullable = false)
 	private String rawDarkIdentifier;
@@ -58,11 +56,13 @@ public class OAIIdentifierDark {
 	@Column(nullable = false)
 	private LocalDateTime datestamp;
 
-	public OAIIdentifierDark(String oaiIdentifier, String darkIdentifier, String rawDarkIdentifier) {
-		this.oaiIdentifier = oaiIdentifier;
-		this.darkIdentifier = darkIdentifier;
+
+	public OAIIdentifierDark(DarkRecord darkRecord, boolean metadata) {
+		this.oaiIdentifier = darkRecord.getOaiIdentifier();
+		this.darkIdentifier = darkRecord.getDarkId().getFormattedDarkId();
 		this.datestamp = LocalDateTime.now();
-		this.rawDarkIdentifier = rawDarkIdentifier;
+		this.rawDarkIdentifier = darkRecord.getDarkId().getPidHashAsString();
+		this.metadata = metadata;
 	}
 
 	public OAIIdentifierDark() {}

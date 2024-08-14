@@ -24,24 +24,29 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
 import org.lareferencia.core.dark.vo.DarkId;
-import org.lareferencia.core.dark.contract.DarkService;
+import org.lareferencia.core.dark.contract.DarkBlockChainService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
 import org.lareferencia.core.dark.repositories.OAIIdentifierDarkRepository;
 import org.lareferencia.core.dark.vo.DarkRecord;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
+import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
 import org.lareferencia.core.worker.BaseBatchWorker;
+import org.lareferencia.core.worker.IPaginator;
 import org.lareferencia.core.worker.NetworkRunningContext;
+import org.lareferencia.core.worker.WorkerRuntimeException;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.stream.Collectors;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
     public static final int NUMBER_OF_DARKPIDS_IN = 100;
+    public static final int DARK_PAGE_SIZE = 100;
+    public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
+    public static final String EMPTY = "";
 
     @Autowired
     private IMetadataRecordStoreService metadataStoreService;
@@ -54,9 +59,9 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
 
     @Autowired
-    private DarkService darkService;
+    private DarkBlockChainService darkBlockChainService;
 
-    private Set<OAIRecord> oaiRecordWithoutDarkId;
+    final Queue<DarkId> availableDarkPids = new ArrayBlockingQueue<>(10000);
 
     public DarkWorker() {
         super();
@@ -66,7 +71,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void preRun() {
 
-        oaiRecordWithoutDarkId = new HashSet<>();
         // busca el lgk
         snapshotId = metadataStoreService.findLastHarvestingSnapshot(runningContext.getNetwork());
 
@@ -74,7 +78,10 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
             logger.debug("dARK PID processing: " + snapshotId);
             // establece una paginator para recorrer los registros que sean validos
-            this.setPaginator(metadataStoreService.getUntestedRecordsPaginator(snapshotId));
+            IPaginator<OAIRecord> validRecordsPaginator = metadataStoreService.getNotInvalidRecordsPaginator(snapshotId);
+            validRecordsPaginator.setPageSize(DARK_PAGE_SIZE);
+
+            this.setPaginator(validRecordsPaginator);
 
 
         } else {
@@ -88,18 +95,40 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
+        List<DarkId> pidsInBulkMode = darkBlockChainService.getPidsInBulkMode();
+        availableDarkPids.addAll(pidsInBulkMode);
     }
 
     @Override
-    public void processItem(OAIRecord record) {
+    public void processItem(OAIRecord oaiRecord) {
 
-        Optional<OAIIdentifierDark> byOaiIdentifier = oaiIdentifierDarkRepository.findByOaiIdentifier(record.getIdentifier());
+        try {
+            OAIRecordMetadata publishedMetadata = metadataStoreService.getPublishedMetadata(oaiRecord);
 
-        if (!byOaiIdentifier.isPresent()) {
-            logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", record.getId());
-            oaiRecordWithoutDarkId.add(record);
+            boolean doesNotContainADarkId = EMPTY.equals(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK));
+
+            if (doesNotContainADarkId) {
+                logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", oaiRecord.getId());
+
+                DarkRecord darkRecord = createDarkRecord(oaiRecord, publishedMetadata);
+
+                metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), darkRecord.getOaiRecordMetadata());
+                darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl());
+                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord, true));
+            }
+
+        } catch (OAIRecordMetadataParseException | MetadataRecordStoreException | WorkerRuntimeException e) {
+            throw new RuntimeException("An error has ocurried during the DarkStep", e);
         }
 
+    }
+
+
+
+    private DarkRecord createDarkRecord(OAIRecord oaiRecord, OAIRecordMetadata publishedMetadata) {
+        DarkId darkId = availableDarkPids.poll();
+        darkId.setFormattedDarkId(darkBlockChainService.formatPid(darkId.getPidHashAsByteArray()));
+        return new DarkRecord(oaiRecord, publishedMetadata, darkId);
     }
 
     @Override
@@ -110,52 +139,9 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void postRun() {
 
-        boolean hasOaiWithoutDarkIdAssociated = oaiRecordWithoutDarkId != null && !oaiRecordWithoutDarkId.isEmpty();
-        if (hasOaiWithoutDarkIdAssociated) {
-            final Queue<DarkId> availableDarkPids = requestDarkPidsToBlockChain();
-            List<DarkRecord> darkRecords = createDarkRecord(availableDarkPids);
-            persistDarkIdToOAIIdentifier(darkRecords);
-
-            darkRecords.stream().forEach(darkRecord ->
-                    darkService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl()));
-
-        }
 
     }
 
 
-    private void persistDarkIdToOAIIdentifier(List<DarkRecord> darkRecords) {
-        darkRecords.forEach(darkRecord ->
-                oaiIdentifierDarkRepository.save(
-                        new OAIIdentifierDark(darkRecord.getOaiIdentifier(),
-                                darkService.formatPid(
-                                        darkRecord.getDarkId().getPidHashAsByteArray()),
-                                darkRecord.getDarkId().getPidHashAsString())
-                ));
-    }
-
-    private List<DarkRecord> createDarkRecord(final Queue<DarkId> availableDarkPids) {
-
-        return oaiRecordWithoutDarkId.stream().map(
-                oaiRecord -> {
-                    try {
-                        return new DarkRecord(oaiRecord, metadataStoreService.getOriginalMetadata(oaiRecord), availableDarkPids.poll());
-                    } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
-                        throw new RuntimeException(e);
-                    }
-                }).collect(Collectors.toList());
-
-    }
-
-    private Queue<DarkId> requestDarkPidsToBlockChain() {
-        final Queue<DarkId> availableDarkPids = new ArrayBlockingQueue<>(10000);
-        int amountOfTimesToRequestBulkPids = (int) Math.ceil((double) oaiRecordWithoutDarkId.size() / NUMBER_OF_DARKPIDS_IN);
-
-        while (amountOfTimesToRequestBulkPids-- != 0) {
-            logger.debug("Step [{}] - Requesting dArk pid in bulk mode", amountOfTimesToRequestBulkPids);
-            availableDarkPids.addAll(darkService.getPidsInBulkMode());
-        }
-        return availableDarkPids;
-    }
 
 }

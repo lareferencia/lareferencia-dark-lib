@@ -13,10 +13,7 @@ public class DarkIdentifierStoreService {
     @Autowired
     private OAIIdentifierDarkRepository repository;
 
-    public OAIIdentifierDark addDarkIdentifier(String oaiIdentifier, String darkIdentifier, String rawDarkIdentifier) {
-        OAIIdentifierDark newPair = new OAIIdentifierDark(oaiIdentifier, darkIdentifier, rawDarkIdentifier);
-        return repository.save(newPair);
-    }
+
 
     public Optional<String> getDarkIdentifierByOAIIdentifier(String oaiIdentifier) {
         return repository.findByOaiIdentifier(oaiIdentifier)
