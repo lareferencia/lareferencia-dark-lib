@@ -32,7 +32,6 @@ import org.web3j.utils.Numeric;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -45,7 +44,7 @@ public class DarkBlockChainService {
     public static final int DARKPID_POSITION = 1;
     public static final int EXPECTED_SIZE_OF_TOPICS = 3;
     public static final int FIRST_BYTE_OF_ARK = 256;
-    public static final int LAST_BYTE_OF_ARK = 274;
+    public static final int LAST_BYTE_OF_ARK = 275;
     public static final String SUCCESS_STATUS = "0x1";
 
 
@@ -63,6 +62,9 @@ public class DarkBlockChainService {
     @Getter
     @Value("${blockchain.chain-id}")
     private Long chainId;
+
+    @Value("${blockchain.generate-pid.sleeptime-milliseconds}")
+    private Long sleepTime;
 
     @Setter
     @Getter
@@ -89,9 +91,10 @@ public class DarkBlockChainService {
     public List<DarkId> getPidsInBulkMode() {
 
         try {
+            Thread.sleep(sleepTime);
 
             Credentials credentials = Credentials.create(privateKey);
-            String assignId = econdeFunction("bulk_assingID", Arrays.<Type>asList(new org.web3j.abi.datatypes.Address(160, credentials.getAddress())), Collections.emptyList());
+            String assignId = econdeFunction("bulk_assingID", Arrays.asList(new org.web3j.abi.datatypes.Address(160, credentials.getAddress())), Collections.emptyList());
 
             RawTransaction transaction = createRawTransaction(credentials, assignId);
             String signedMessage = signTransaction(transaction, credentials);
@@ -144,20 +147,9 @@ public class DarkBlockChainService {
             RawTransaction transaction = createRawTransaction(credentials, assignId);
             String signedMessage = signTransaction(transaction, credentials);
 
-            EthSendTransaction bulkAssignTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
-            // TODO: IS THERE A WAY TO KNOW IF THE ASSOCIATION WAS CORRECT. WITHOUT THE NEED OF ANOTHER GET
-            TransactionReceipt receipt = sendTransactionAndWaitForReceipt(bulkAssignTransaction);
-            LOG.info("Receipt recieved [{}]", receipt.getTransactionHash());
+            blockChainProxy.ethSendRawTransaction(signedMessage).sendAsync();
 
-
-            boolean transactionSucceed = receipt.getStatus().equals(SUCCESS_STATUS);
-            if(!transactionSucceed) {
-                throw new WorkerRuntimeException(
-                        MessageFormat.format("The URL for the DarkId {0} wasnt sent to the block chain",
-                                bytes32.toString()));
-            }
-
-        } catch (ExecutionException | InterruptedException | IOException | TransactionException | WorkerRuntimeException e) {
+        } catch (ExecutionException | InterruptedException | IOException e) {
             throw new WorkerRuntimeException(e.getMessage());
         }
 

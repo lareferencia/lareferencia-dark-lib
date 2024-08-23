@@ -51,18 +51,14 @@ public class OAIIdentifierDark {
 	private String rawDarkIdentifier;
 
 	@Column(nullable = false)
-	private Boolean metadata = false;
-
-	@Column(nullable = false)
 	private LocalDateTime datestamp;
 
 
-	public OAIIdentifierDark(DarkRecord darkRecord, boolean metadata) {
+	public OAIIdentifierDark(DarkRecord darkRecord) {
 		this.oaiIdentifier = darkRecord.getOaiIdentifier();
 		this.darkIdentifier = darkRecord.getDarkId().getFormattedDarkId();
 		this.datestamp = LocalDateTime.now();
 		this.rawDarkIdentifier = darkRecord.getDarkId().getPidHashAsString();
-		this.metadata = metadata;
 	}
 
 	public OAIIdentifierDark() {}

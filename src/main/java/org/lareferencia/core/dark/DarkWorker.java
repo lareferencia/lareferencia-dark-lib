@@ -43,7 +43,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
-    public static final int NUMBER_OF_DARKPIDS_IN = 100;
     public static final int DARK_PAGE_SIZE = 100;
     public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
     public static final String EMPTY = "";
@@ -95,6 +94,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
+
         List<DarkId> pidsInBulkMode = darkBlockChainService.getPidsInBulkMode();
         availableDarkPids.addAll(pidsInBulkMode);
     }
@@ -108,13 +108,15 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             boolean doesNotContainADarkId = EMPTY.equals(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK));
 
             if (doesNotContainADarkId) {
-                logger.debug("Adding the OAI Identificer [{}] to be associated with an dArk Id", oaiRecord.getId());
+                logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id", oaiRecord.getId());
 
                 DarkRecord darkRecord = createDarkRecord(oaiRecord, publishedMetadata);
 
-                metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), darkRecord.getOaiRecordMetadata());
+                publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
+                metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
+
                 darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl());
-                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord, true));
+                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
             }
 
         } catch (OAIRecordMetadataParseException | MetadataRecordStoreException | WorkerRuntimeException e) {
