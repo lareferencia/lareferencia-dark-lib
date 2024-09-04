@@ -23,6 +23,7 @@ package org.lareferencia.core.dark.domain;
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 import javax.persistence.Id;
 
@@ -32,6 +33,7 @@ import javax.persistence.Id;
 @Entity
 @Getter
 @Setter
+@NoArgsConstructor
 public class DarkCredential {
 	
 	@Id
@@ -39,6 +41,9 @@ public class DarkCredential {
 
 	@Column(nullable = false)
 	private String privateKey;
+
+	@Column(nullable = false, name = "network_id")
+	private Long networkId;
 
 
 	public DarkCredential(Long naan, String privateKey) {

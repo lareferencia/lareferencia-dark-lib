@@ -55,11 +55,6 @@ public class DarkBlockChainService {
 
     @Setter
     @Getter
-    @Value("${blockchain.account-private-key}")
-    private String privateKey;
-
-    @Setter
-    @Getter
     @Value("${blockchain.chain-id}")
     private Long chainId;
 
@@ -88,7 +83,7 @@ public class DarkBlockChainService {
     }
 
 
-    public List<DarkId> getPidsInBulkMode() {
+    public List<DarkId> getPidsInBulkMode(String privateKey) {
 
         try {
             Thread.sleep(sleepTime);
@@ -115,7 +110,7 @@ public class DarkBlockChainService {
     }
 
 
-    public String formatPid(byte[] pidHash) {
+    public String formatPid(byte[] pidHash, String privateKey) {
 
         try {
 
@@ -135,7 +130,7 @@ public class DarkBlockChainService {
     }
 
 
-    public void associateDarkPidWithUrl(byte[] pid_hash, String url) throws WorkerRuntimeException {
+    public void associateDarkPidWithUrl(byte[] pid_hash, String url, String privateKey) throws WorkerRuntimeException {
         try {
             Credentials credentials = Credentials.create(privateKey);
             Bytes32 bytes32 = new Bytes32(pid_hash);
