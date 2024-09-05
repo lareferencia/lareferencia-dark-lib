@@ -20,11 +20,13 @@
 
 package org.lareferencia.core.dark.repositories;
 
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.lareferencia.core.dark.domain.DarkCredential;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 public interface DarkCredentialRepository extends JpaRepository<DarkCredential, Long> {
 
-    DarkCredential findByNaan(Long naan);
+    @Query("select credential from DarkCredential credential where credential.networkId = ?1")
+    DarkCredential findByNetwork(Long network);
 
 }

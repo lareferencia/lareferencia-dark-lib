@@ -22,6 +22,6 @@ public class DarkCredentialService {
     }
 
     public String getPrivateKeyByNAAN(Long naan) {
-        return darkCredentialRepository.findByNaan(naan).getPrivateKey();
+        return darkCredentialRepository.findByNetwork(naan).getPrivateKey();
     }
 }

@@ -23,6 +23,8 @@ package org.lareferencia.core.dark;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
+import org.lareferencia.core.dark.domain.DarkCredential;
+import org.lareferencia.core.dark.repositories.DarkCredentialRepository;
 import org.lareferencia.core.dark.vo.DarkId;
 import org.lareferencia.core.dark.contract.DarkBlockChainService;
 import org.lareferencia.core.dark.domain.OAIIdentifierDark;
@@ -60,7 +62,12 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Autowired
     private DarkBlockChainService darkBlockChainService;
 
+    @Autowired
+    private DarkCredentialRepository darkCredentialRepository;
+
     final Queue<DarkId> availableDarkPids = new ArrayBlockingQueue<>(10000);
+
+    private DarkCredential darkCredential;
 
     public DarkWorker() {
         super();
@@ -72,6 +79,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
         // busca el lgk
         snapshotId = metadataStoreService.findLastHarvestingSnapshot(runningContext.getNetwork());
+        darkCredential = darkCredentialRepository.findByNetwork(runningContext.getNetwork().getId());
 
         if (snapshotId != null) { // solo si existe un lgk
 
@@ -94,10 +102,10 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
-
-        List<DarkId> pidsInBulkMode = darkBlockChainService.getPidsInBulkMode();
+        List<DarkId> pidsInBulkMode = darkBlockChainService.getPidsInBulkMode(darkCredential.getPrivateKey());
         availableDarkPids.addAll(pidsInBulkMode);
     }
+
 
     @Override
     public void processItem(OAIRecord oaiRecord) {
@@ -115,7 +123,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                 publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
                 metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
 
-                darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl());
+                darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
                 oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
             }
 
@@ -129,7 +137,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     private DarkRecord createDarkRecord(OAIRecord oaiRecord, OAIRecordMetadata publishedMetadata) {
         DarkId darkId = availableDarkPids.poll();
-        darkId.setFormattedDarkId(darkBlockChainService.formatPid(darkId.getPidHashAsByteArray()));
+        darkId.setFormattedDarkId(darkBlockChainService.formatPid(darkId.getPidHashAsByteArray(), darkCredential.getPrivateKey()));
         return new DarkRecord(oaiRecord, publishedMetadata, darkId);
     }
 
