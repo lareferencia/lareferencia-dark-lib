@@ -18,7 +18,7 @@
  *   This file is part of LA Referencia software platform LRHarvester v4.x
  *   For any further information please contact Lautaro Matas <lmatas@gmail.com>
  */
-package org.lareferencia.core.dark.services;
+package org.lareferencia.contrib.dark.services;
 
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.context.annotation.Configuration;
@@ -26,8 +26,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 
 @Configuration
-@EntityScan("org.lareferencia.core.dark.domain")
-@EnableJpaRepositories(value="org.lareferencia.core.dark.repositories")
+@EntityScan("org.lareferencia.contrib.dark.domain")
+@EnableJpaRepositories(value="org.lareferencia.contrib.dark.repositories")
 public class AppConfiguration  {
 
 

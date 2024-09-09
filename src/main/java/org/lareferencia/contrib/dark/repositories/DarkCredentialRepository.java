@@ -18,18 +18,15 @@
  *   For any further information please contact Lautaro Matas <lmatas@gmail.com>
  */
 
-package org.lareferencia.core.dark.repositories;
+package org.lareferencia.contrib.dark.repositories;
 
+import org.lareferencia.contrib.dark.domain.DarkCredential;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.lareferencia.core.dark.domain.OAIIdentifierDark;
+import org.springframework.data.jpa.repository.Query;
 
-// import optional class
-import java.util.Optional;
+public interface DarkCredentialRepository extends JpaRepository<DarkCredential, Long> {
 
-public interface OAIIdentifierDarkRepository extends JpaRepository<OAIIdentifierDark, Long> {
+    @Query("select credential from DarkCredential credential where credential.networkId = ?1")
+    DarkCredential findByNetwork(Long network);
 
-    Optional<OAIIdentifierDark> findByOaiIdentifier(String oaiIdentifier);
-    Optional<OAIIdentifierDark> findByDarkIdentifier(String darkIdentifier);
 }
-
-

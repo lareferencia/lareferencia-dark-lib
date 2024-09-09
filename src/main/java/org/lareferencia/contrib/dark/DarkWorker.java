@@ -18,18 +18,18 @@
  *   For any further information please contact Lautaro Matas <lmatas@gmail.com>
  */
 
-package org.lareferencia.core.dark;
+package org.lareferencia.contrib.dark;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.core.dark.domain.DarkCredential;
-import org.lareferencia.core.dark.repositories.DarkCredentialRepository;
-import org.lareferencia.core.dark.vo.DarkId;
-import org.lareferencia.core.dark.contract.DarkBlockChainService;
-import org.lareferencia.core.dark.domain.OAIIdentifierDark;
-import org.lareferencia.core.dark.repositories.OAIIdentifierDarkRepository;
-import org.lareferencia.core.dark.vo.DarkRecord;
+import org.lareferencia.contrib.dark.contract.DarkBlockChainService;
+import org.lareferencia.contrib.dark.domain.DarkCredential;
+import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
+import org.lareferencia.contrib.dark.repositories.DarkCredentialRepository;
+import org.lareferencia.contrib.dark.repositories.OAIIdentifierDarkRepository;
+import org.lareferencia.contrib.dark.vo.DarkId;
+import org.lareferencia.contrib.dark.vo.DarkRecord;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
@@ -46,7 +46,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
     public static final int DARK_PAGE_SIZE = 100;
-    public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
+    public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark"; // TODO: make it configurable
     public static final String EMPTY = "";
 
     @Autowired

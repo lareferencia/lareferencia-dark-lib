@@ -1,4 +1,4 @@
-package org.lareferencia.core.dark.contract;
+package org.lareferencia.contrib.dark.contract;
 
 import io.reactivex.Flowable;
 import org.web3j.abi.EventEncoder;

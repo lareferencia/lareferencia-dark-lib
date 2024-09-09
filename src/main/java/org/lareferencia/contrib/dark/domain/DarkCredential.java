@@ -18,19 +18,14 @@
  *   For any further information please contact Lautaro Matas <lmatas@gmail.com>
  */
 
-package org.lareferencia.core.dark.domain;
+package org.lareferencia.contrib.dark.domain;
 
 import javax.persistence.Column;
 import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.lareferencia.core.dark.vo.DarkRecord;
-
-import java.time.LocalDateTime;
+import javax.persistence.Id;
 
 
 /**
@@ -38,29 +33,34 @@ import java.time.LocalDateTime;
 @Entity
 @Getter
 @Setter
-public class OAIIdentifierDark {
-
+@NoArgsConstructor
+public class DarkCredential {
+	
 	@Id
-	@Column(nullable = false)
-	private String darkIdentifier;
+	protected Long naan = null;
 
 	@Column(nullable = false)
-	private String oaiIdentifier;
+	private String privateKey;
 
-	@Column(nullable = false)
-	private String rawDarkIdentifier;
-
-	@Column(nullable = false)
-	private LocalDateTime datestamp;
+	@Column(nullable = false, name = "network_id")
+	private Long networkId;
 
 
-	public OAIIdentifierDark(DarkRecord darkRecord) {
-		this.oaiIdentifier = darkRecord.getOaiIdentifier();
-		this.darkIdentifier = darkRecord.getDarkId().getFormattedDarkId();
-		this.datestamp = LocalDateTime.now();
-		this.rawDarkIdentifier = darkRecord.getDarkId().getPidHashAsString();
+	public DarkCredential(Long naan, String privateKey) {
+		this.naan = naan;
+		this.privateKey = privateKey;
 	}
 
-	public OAIIdentifierDark() {}
+
+	public DarkCredential(Long naan, String privateKey, Long networkId) {
+		this.naan = naan;
+		this.privateKey = privateKey;
+		this.networkId = networkId;
+	}
+
+	public String toString() {
+		return  "naan=" + naan +", privateKey='" + privateKey + '\'' +", networkId=" + networkId;
+	}	
+
 
 }

@@ -1,10 +1,10 @@
-package org.lareferencia.core.dark.contract;
+package org.lareferencia.contrib.dark.contract;
 
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.lareferencia.core.dark.vo.DarkId;
+import org.lareferencia.contrib.dark.vo.DarkId;
 import org.lareferencia.core.worker.WorkerRuntimeException;
 import org.springframework.beans.factory.annotation.Value;
 import org.web3j.abi.FunctionEncoder;

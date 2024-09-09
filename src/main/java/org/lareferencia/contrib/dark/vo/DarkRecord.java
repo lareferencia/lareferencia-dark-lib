@@ -1,4 +1,4 @@
-package org.lareferencia.core.dark.vo;
+package org.lareferencia.contrib.dark.vo;
 
 import lombok.Getter;
 import org.lareferencia.backend.domain.OAIRecord;
