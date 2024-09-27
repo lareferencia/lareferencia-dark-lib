@@ -25,8 +25,7 @@ public class DarkRecord {
         this.oaiIdentifier = oaiRecord.getIdentifier();
         this.oaiRecordMetadata = oaiRecordMetadata;
         this.darkId = darkId;
-        this.url = oaiRecordMetadata.getFieldOcurrences("dc.identifier.none").stream().filter(identifier -> identifier.startsWith("http://") || identifier.startsWith("https://")).findFirst().get();
-        this.title = oaiRecordMetadata.getFieldValue("dc.title.none");
+        this.url = oaiRecordMetadata.getFieldOcurrences("dc.identifier.*").stream().filter(identifier -> identifier.startsWith("http://") || identifier.startsWith("https://")).findFirst().get();
 
     }
 
