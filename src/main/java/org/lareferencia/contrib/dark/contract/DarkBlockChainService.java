@@ -149,13 +149,13 @@ public class DarkBlockChainService {
 
             EthSendTransaction sentTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
             TransactionReceipt receipt = waitAndGetReceipt(sentTransaction);
-            LOG.debug("The set_url method for the dARC Hash [{}] returned the following: [{}]", new String(pid_hash), receipt.toString());
+            LOG.debug("The set_url method for the dARK Hash [{}] returned the following: [{}]", new String(pid_hash), receipt.toString());
 
             if(SUCCESS_STATUS.equals(receipt.getStatus())) {
-                LOG.debug("The set_url method for the dARC Hash [{}] was successful", new String(pid_hash));
+                LOG.debug("The set_url method for the dARK Hash [{}] was successful", new String(pid_hash));
 
             } else {
-                LOG.error("The set_url method for the dARC Hash [{}] ended with error, receipt: [{}]", new String(pid_hash), receipt.toString());
+                LOG.error("The set_url method for the dARK Hash [{}] ended with error, receipt: [{}]", new String(pid_hash), receipt.toString());
             }
 
         } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {

@@ -132,14 +132,14 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                         transactionStatus = getTransactionStatus();
 
                         DarkRecord darkRecord = new DarkRecord(oaiRecord, publishedMetadata, pidPool.unstackDarkPid(darkCredential.getPrivateKey()));
-                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARC Hash", oaiRecord.getId(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARK Hash", oaiRecord.getId(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
 
                         publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
                         metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
 
-                        logger.debug("Giving URL [{}] to dARC Id [{}] / dARC Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Giving URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
                         darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
-                        logger.debug("Association made: URL [{}] to dARC Id [{}] / dARC Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Association made: URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
                         oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
 
                         transactionManager.commit(transactionStatus);
