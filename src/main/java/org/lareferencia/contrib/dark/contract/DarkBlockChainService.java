@@ -156,6 +156,7 @@ public class DarkBlockChainService {
 
             } else {
                 LOG.error("The set_url method for the dARK Hash [{}] ended with error, receipt: [{}]", new String(pid_hash), receipt.toString());
+                // TODO: THROW ERROR, CANT KILL THE THREAD
             }
 
         } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {
