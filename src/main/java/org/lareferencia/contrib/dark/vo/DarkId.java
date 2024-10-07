@@ -2,7 +2,6 @@ package org.lareferencia.contrib.dark.vo;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.web3j.utils.Numeric;
 
 @Getter
 public class DarkId {
@@ -12,9 +11,10 @@ public class DarkId {
     @Setter
     private String formattedDarkId;
 
-    public DarkId(String pidHashAsString) {
+    public DarkId(String pidHashAsString, byte[] pidHashAsByteArray, String formattedDarkId) {
         this.pidHashAsString = pidHashAsString;
-        this.pidHashAsByteArray = Numeric.hexStringToByteArray(pidHashAsString);
+        this.pidHashAsByteArray = pidHashAsByteArray;
+        this.formattedDarkId = formattedDarkId;
     }
 
     @Override

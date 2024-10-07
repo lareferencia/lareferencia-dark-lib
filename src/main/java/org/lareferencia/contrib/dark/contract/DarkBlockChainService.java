@@ -96,11 +96,16 @@ public class DarkBlockChainService {
 
             EthSendTransaction bulkAssignTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
 
-            TransactionReceipt receipt = sendTransactionAndWaitForReceipt(bulkAssignTransaction);
+            TransactionReceipt receipt = waitAndGetReceipt(bulkAssignTransaction);
             return receipt.getLogs().stream()
                     .filter(log -> log.getTopics() != null && log.getTopics().size() == EXPECTED_SIZE_OF_TOPICS)
                     .map(log -> log.getTopics().get(DARKPID_POSITION))
-                    .map(darkPid -> new DarkId(darkPid)).collect(Collectors.toList());
+                    .map(darkPid ->
+                            new DarkId(
+                                    darkPid,
+                                    Numeric.hexStringToByteArray(darkPid),
+                                    formatPid(Numeric.hexStringToByteArray(darkPid), privateKey)))
+                    .collect(Collectors.toList());
 
         } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {
             LOG.error(e);
@@ -142,16 +147,25 @@ public class DarkBlockChainService {
             RawTransaction transaction = createRawTransaction(credentials, assignId);
             String signedMessage = signTransaction(transaction, credentials);
 
-            blockChainProxy.ethSendRawTransaction(signedMessage).sendAsync();
+            EthSendTransaction sentTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
+            TransactionReceipt receipt = waitAndGetReceipt(sentTransaction);
+            LOG.debug("The set_url method for the dARC Hash [{}] returned the following: [{}]", new String(pid_hash), receipt.toString());
 
-        } catch (ExecutionException | InterruptedException | IOException e) {
+            if(SUCCESS_STATUS.equals(receipt.getStatus())) {
+                LOG.debug("The set_url method for the dARC Hash [{}] was successful", new String(pid_hash));
+
+            } else {
+                LOG.error("The set_url method for the dARC Hash [{}] ended with error, receipt: [{}]", new String(pid_hash), receipt.toString());
+            }
+
+        } catch (ExecutionException | InterruptedException | IOException | TransactionException e) {
             throw new WorkerRuntimeException(e.getMessage());
         }
 
     }
 
 
-    private TransactionReceipt sendTransactionAndWaitForReceipt(EthSendTransaction bulkAssignTransaction) throws IOException, TransactionException {
+    private TransactionReceipt waitAndGetReceipt(EthSendTransaction bulkAssignTransaction) throws IOException, TransactionException {
         TransactionReceiptProcessor receiptProcessor = new PollingTransactionReceiptProcessor(
                 blockChainProxy,
                 3 * 1000,

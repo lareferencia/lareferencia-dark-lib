@@ -28,7 +28,7 @@ import org.lareferencia.contrib.dark.domain.DarkCredential;
 import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
 import org.lareferencia.contrib.dark.repositories.DarkCredentialRepository;
 import org.lareferencia.contrib.dark.repositories.OAIIdentifierDarkRepository;
-import org.lareferencia.contrib.dark.vo.DarkId;
+import org.lareferencia.contrib.dark.services.PidPool;
 import org.lareferencia.contrib.dark.vo.DarkRecord;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
@@ -37,11 +37,15 @@ import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.IPaginator;
 import org.lareferencia.core.worker.NetworkRunningContext;
-import org.lareferencia.core.worker.WorkerRuntimeException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 
-import java.util.*;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
@@ -65,9 +69,15 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Autowired
     private DarkCredentialRepository darkCredentialRepository;
 
-    final Queue<DarkId> availableDarkPids = new ArrayBlockingQueue<>(10000);
-
+    @Autowired
+    private PidPool pidPool;
     private DarkCredential darkCredential;
+
+    private ThreadPoolExecutor executor = null;
+
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     public DarkWorker() {
         super();
@@ -91,6 +101,8 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             this.setPaginator(validRecordsPaginator);
 
 
+            executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(10);
+
         } else {
 
             logger.warn("There are not harvested snapshots: " + runningContext.getNetwork().getAcronym());
@@ -102,8 +114,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
-        List<DarkId> pidsInBulkMode = darkBlockChainService.getPidsInBulkMode(darkCredential.getPrivateKey());
-        availableDarkPids.addAll(pidsInBulkMode);
     }
 
 
@@ -116,33 +126,59 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             boolean doesNotContainADarkId = EMPTY.equals(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK));
 
             if (doesNotContainADarkId) {
-                logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id", oaiRecord.getId());
+                executor.submit(() -> {
+                    TransactionStatus transactionStatus = null;
+                    try {
+                        transactionStatus = getTransactionStatus();
 
-                DarkRecord darkRecord = createDarkRecord(oaiRecord, publishedMetadata);
+                        DarkRecord darkRecord = new DarkRecord(oaiRecord, publishedMetadata, pidPool.unstackDarkPid(darkCredential.getPrivateKey()));
+                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARC Hash", oaiRecord.getId(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
 
-                publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
-                metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
+                        publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
+                        metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
 
-                darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
-                oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
+                        logger.debug("Giving URL [{}] to dARC Id [{}] / dARC Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
+                        logger.debug("Association made: URL [{}] to dARC Id [{}] / dARC Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
+
+                        transactionManager.commit(transactionStatus);
+
+                    } catch (Throwable e) {
+                        logger.error(e);
+                        transactionManager.rollback(transactionStatus);
+
+                        throw new RuntimeException("An error has ocurried during the the OAI-Identifier: " + oaiRecord.getIdentifier(), e);
+                    }
+                });
             }
 
-        } catch (OAIRecordMetadataParseException | MetadataRecordStoreException | WorkerRuntimeException e) {
+        } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
+            logger.error(e);
             throw new RuntimeException("An error has ocurried during the DarkStep", e);
         }
 
     }
 
-
-
-    private DarkRecord createDarkRecord(OAIRecord oaiRecord, OAIRecordMetadata publishedMetadata) {
-        DarkId darkId = availableDarkPids.poll();
-        darkId.setFormattedDarkId(darkBlockChainService.formatPid(darkId.getPidHashAsByteArray(), darkCredential.getPrivateKey()));
-        return new DarkRecord(oaiRecord, publishedMetadata, darkId);
+    private TransactionStatus getTransactionStatus() {
+        DefaultTransactionDefinition definition = new DefaultTransactionDefinition();
+        definition.setIsolationLevel(TransactionDefinition.ISOLATION_DEFAULT);
+        TransactionStatus transactionStatus = transactionManager.getTransaction(definition);
+        return transactionStatus;
     }
+
 
     @Override
     public void postPage() {
+        boolean wasLastpage = getTotalPages() == getActualPage();
+
+        if(wasLastpage) {
+            try {
+                executor.awaitTermination(1, TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
 
     }
 
@@ -151,7 +187,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
 
     }
-
 
 
 }
