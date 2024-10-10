@@ -149,13 +149,13 @@ public class DarkBlockChainService {
 
             EthSendTransaction sentTransaction = blockChainProxy.ethSendRawTransaction(signedMessage).send();
             TransactionReceipt receipt = waitAndGetReceipt(sentTransaction);
-            LOG.debug("The set_url method for the dARK Hash [{}] returned the following: [{}]", new String(pid_hash), receipt.toString());
+            LOG.debug("The set_url method for the dARK Hash [{}] returned the following: [{}]", Numeric.toHexString(pid_hash), receipt.toString());
 
             if(SUCCESS_STATUS.equals(receipt.getStatus())) {
-                LOG.debug("The set_url method for the dARK Hash [{}] was successful", new String(pid_hash));
+                LOG.debug("The set_url method for the dARK Hash [{}] was successful", Numeric.toHexString(pid_hash));
 
             } else {
-                LOG.error("The set_url method for the dARK Hash [{}] ended with error, receipt: [{}]", new String(pid_hash), receipt.toString());
+                LOG.error("The set_url method for the dARK Hash [{}] ended with error, receipt: [{}]", Numeric.toHexString(pid_hash), receipt.toString());
                 // TODO: THROW ERROR, CANT KILL THE THREAD
             }
 
@@ -166,14 +166,14 @@ public class DarkBlockChainService {
     }
 
 
-    private TransactionReceipt waitAndGetReceipt(EthSendTransaction bulkAssignTransaction) throws IOException, TransactionException {
+    private TransactionReceipt waitAndGetReceipt(EthSendTransaction transaction) throws IOException, TransactionException {
         TransactionReceiptProcessor receiptProcessor = new PollingTransactionReceiptProcessor(
                 blockChainProxy,
-                3 * 1000,
+                5 * 1000,
                 TransactionManager.DEFAULT_POLLING_ATTEMPTS_PER_TX_HASH);
 
         TransactionReceipt receipt = receiptProcessor
-                .waitForTransactionReceipt(bulkAssignTransaction.getTransactionHash());
+                .waitForTransactionReceipt(transaction.getTransactionHash());
         return receipt;
     }
 

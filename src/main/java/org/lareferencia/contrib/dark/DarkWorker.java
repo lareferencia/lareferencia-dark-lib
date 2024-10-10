@@ -101,7 +101,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             this.setPaginator(validRecordsPaginator);
 
 
-            executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(10);
+            executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(3);
 
         } else {
 
@@ -132,14 +132,14 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                         transactionStatus = getTransactionStatus();
 
                         DarkRecord darkRecord = new DarkRecord(oaiRecord, publishedMetadata, pidPool.unstackDarkPid(darkCredential.getPrivateKey()));
-                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARK Hash", oaiRecord.getId(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARK Hash", oaiRecord.getId(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
 
                         publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
                         metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
 
-                        logger.debug("Giving URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Giving URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
                         darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
-                        logger.debug("Association made: URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId(), darkRecord.getDarkId().getPidHashAsString());
+                        logger.debug("Association made: URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
                         oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
 
                         transactionManager.commit(transactionStatus);
@@ -170,17 +170,14 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void postPage() {
-        boolean wasLastpage = getTotalPages() == getActualPage();
 
-        if(wasLastpage) {
-            try {
-                executor.awaitTermination(1, TimeUnit.MINUTES);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+        try {
+            executor.awaitTermination(30, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-
     }
+
 
     @Override
     public void postRun() {
