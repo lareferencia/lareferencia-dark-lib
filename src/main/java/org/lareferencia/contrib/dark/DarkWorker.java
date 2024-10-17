@@ -56,6 +56,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     public static final int DARK_PAGE_SIZE = 100;
     public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
+    public static final String ARK_PREFIX = "ark:/";
     public static final String EMPTY = "";
     public static final int STATUS_SUCCESS = 200;
 
@@ -78,8 +79,8 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Setter
     @Getter
-    @Value("${hyperdrive.url}")
-    private String hyperdriveUrl;
+    @Value("${dark.minter.url:http://minter.dark-pid.net/}")
+    private String minterURL;
 
 
     public DarkWorker() {
@@ -160,7 +161,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     public void postPage() {
 
         if (!recordsToProcess.isEmpty()) {
-            HttpRequest request = HttpRequest.newBuilder(new URI(hyperdriveUrl))
+            HttpRequest request = HttpRequest.newBuilder(new URI(minterURL))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(new URLAssociationRequest(recordsToProcess, darkCredential.getPrivateKey()).asJson()))
                     .build();
@@ -178,7 +179,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                     OaiRecordWrapper oaiRecordWrapper = recordsToProcess.stream().filter(currentRecord ->
                             currentRecord.getOaiRecordMetadata().getIdentifier().equals(ingestedPid.getOai_id())).findFirst().get();
 
-                    String ark = "ark:/" + ingestedPid.getArk();
+                    String ark = ARK_PREFIX + ingestedPid.getArk();
                     oaiRecordWrapper.getOaiRecordMetadata().addFieldOcurrence(DC_IDENTIFIER_DARK, ark);
                     metadataStoreService.updatePublishedMetadata(oaiRecordWrapper.getOaiRecord(), oaiRecordWrapper.getOaiRecordMetadata());
 
