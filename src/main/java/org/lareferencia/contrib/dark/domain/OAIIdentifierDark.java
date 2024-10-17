@@ -49,17 +49,13 @@ public class OAIIdentifierDark {
 	private String oaiIdentifier;
 
 	@Column(nullable = false)
-	private String rawDarkIdentifier;
-
-	@Column(nullable = false)
 	private LocalDateTime datestamp;
 
 
-	public OAIIdentifierDark(DarkRecord darkRecord) {
-		this.oaiIdentifier = darkRecord.getOaiIdentifier();
-		this.darkIdentifier = darkRecord.getDarkId().getFormattedDarkId();
+	public OAIIdentifierDark(String darkIdentifier, String oaiIdentifier) {
+		this.darkIdentifier = darkIdentifier;
+		this.oaiIdentifier = oaiIdentifier;
 		this.datestamp = LocalDateTime.now();
-		this.rawDarkIdentifier = darkRecord.getDarkId().getPidHashAsString();
 	}
 
 	public OAIIdentifierDark() {}

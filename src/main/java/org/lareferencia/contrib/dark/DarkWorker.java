@@ -20,16 +20,20 @@
 
 package org.lareferencia.contrib.dark;
 
+
+import lombok.Getter;
+import lombok.Setter;
+import lombok.SneakyThrows;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.contrib.dark.contract.DarkBlockChainService;
+import org.lareferencia.contrib.dark.client.URLAssociationRequest;
+import org.lareferencia.contrib.dark.client.URLAssociationResponse;
 import org.lareferencia.contrib.dark.domain.DarkCredential;
 import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
 import org.lareferencia.contrib.dark.repositories.DarkCredentialRepository;
 import org.lareferencia.contrib.dark.repositories.OAIIdentifierDarkRepository;
-import org.lareferencia.contrib.dark.services.PidPool;
-import org.lareferencia.contrib.dark.vo.DarkRecord;
+import org.lareferencia.contrib.dark.vo.OaiRecordWrapper;
 import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
@@ -38,20 +42,21 @@ import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.IPaginator;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.beans.factory.annotation.Value;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
     public static final int DARK_PAGE_SIZE = 100;
-    public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark"; // TODO: make it configurable
+    public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
     public static final String EMPTY = "";
+    public static final int STATUS_SUCCESS = 200;
 
     @Autowired
     private IMetadataRecordStoreService metadataStoreService;
@@ -64,20 +69,17 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
 
     @Autowired
-    private DarkBlockChainService darkBlockChainService;
-
-    @Autowired
     private DarkCredentialRepository darkCredentialRepository;
 
-    @Autowired
-    private PidPool pidPool;
     private DarkCredential darkCredential;
 
-    private ThreadPoolExecutor executor = null;
+    private List<OaiRecordWrapper> records;
 
+    @Setter
+    @Getter
+    @Value("${hyperdrive.url}")
+    private String hyperdriveUrl;
 
-    @Autowired
-    private PlatformTransactionManager transactionManager;
 
     public DarkWorker() {
         super();
@@ -100,9 +102,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
             this.setPaginator(validRecordsPaginator);
 
-
-            executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(3);
-
         } else {
 
             logger.warn("There are not harvested snapshots: " + runningContext.getNetwork().getAcronym());
@@ -114,6 +113,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
+        records = new ArrayList<>();
     }
 
 
@@ -126,31 +126,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             boolean doesNotContainADarkId = EMPTY.equals(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK));
 
             if (doesNotContainADarkId) {
-                executor.submit(() -> {
-                    TransactionStatus transactionStatus = null;
-                    try {
-                        transactionStatus = getTransactionStatus();
-
-                        DarkRecord darkRecord = new DarkRecord(oaiRecord, publishedMetadata, pidPool.unstackDarkPid(darkCredential.getPrivateKey()));
-                        logger.debug("Adding the OAI Identifier [{}] to be associated with an dArk Id [{}] / dARK Hash", oaiRecord.getId(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
-
-                        publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, darkRecord.getDarkId().getFormattedDarkId());
-                        metadataStoreService.updatePublishedMetadata(darkRecord.getOaiRecord(), publishedMetadata);
-
-                        logger.debug("Giving URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
-                        darkBlockChainService.associateDarkPidWithUrl(darkRecord.getDarkId().getPidHashAsByteArray(), darkRecord.getUrl(), darkCredential.getPrivateKey());
-                        logger.debug("Association made: URL [{}] to dARK Id [{}] / dARK Hash [{}]", darkRecord.getUrl(), darkRecord.getDarkId().getFormattedDarkId(), darkRecord.getDarkId().getPidHashAsString());
-                        oaiIdentifierDarkRepository.save(new OAIIdentifierDark(darkRecord));
-
-                        transactionManager.commit(transactionStatus);
-
-                    } catch (Throwable e) {
-                        logger.error(e);
-                        transactionManager.rollback(transactionStatus);
-
-                        throw new RuntimeException("An error has ocurried during the the OAI-Identifier: " + oaiRecord.getIdentifier(), e);
-                    }
-                });
+                records.add(new OaiRecordWrapper(oaiRecord, publishedMetadata));
             }
 
         } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
@@ -160,22 +136,40 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     }
 
-    private TransactionStatus getTransactionStatus() {
-        DefaultTransactionDefinition definition = new DefaultTransactionDefinition();
-        definition.setIsolationLevel(TransactionDefinition.ISOLATION_DEFAULT);
-        TransactionStatus transactionStatus = transactionManager.getTransaction(definition);
-        return transactionStatus;
-    }
 
-
+    @SneakyThrows
     @Override
     public void postPage() {
 
-        try {
-            executor.awaitTermination(30, TimeUnit.MINUTES);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+        if (!records.isEmpty()) {
+            HttpRequest request = HttpRequest.newBuilder(new URI(hyperdriveUrl))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(new URLAssociationRequest(records, darkCredential.getPrivateKey()).asJson()))
+                    .build();
+
+            HttpResponse<String> httpResponse = HttpClient.newHttpClient()
+                    .send(request, HttpResponse.BodyHandlers.ofString());
+
+            String responseBody = httpResponse.body();
+            logger.debug("Got the status [{}] and the following message from hyperdrive [{}]", httpResponse.statusCode(), responseBody);
+
+            if (httpResponse.statusCode() == STATUS_SUCCESS) {
+                URLAssociationResponse urlAssociationResponse = URLAssociationResponse.fromString(responseBody);
+                urlAssociationResponse.getIngested_pids().forEach(ingestedPid -> {
+
+                    OaiRecordWrapper oaiRecordWrapper = records.stream().filter(currentRecord ->
+                            currentRecord.getOaiRecordMetadata().getIdentifier().equals(ingestedPid.getOai_id())).findFirst().get();
+
+                    String ark = "ark:/" + ingestedPid.getArk();
+                    oaiRecordWrapper.getOaiRecordMetadata().addFieldOcurrence(DC_IDENTIFIER_DARK, ark);
+                    metadataStoreService.updatePublishedMetadata(oaiRecordWrapper.getOaiRecord(), oaiRecordWrapper.getOaiRecordMetadata());
+
+                    oaiIdentifierDarkRepository.save(new OAIIdentifierDark(ark, ingestedPid.getOai_id()));
+                });
+            }
         }
+
+
     }
 
 
