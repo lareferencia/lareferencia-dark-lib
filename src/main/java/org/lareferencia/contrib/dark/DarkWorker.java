@@ -50,6 +50,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
@@ -73,7 +74,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     private DarkCredential darkCredential;
 
-    private List<OaiRecordWrapper> records;
+    private List<OaiRecordWrapper> recordsToProcess = new ArrayList<>();
 
     @Setter
     @Getter
@@ -113,7 +114,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
     @Override
     public void prePage() {
-        records = new ArrayList<>();
+        recordsToProcess.clear();
     }
 
 
@@ -122,12 +123,29 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
         try {
             OAIRecordMetadata publishedMetadata = metadataStoreService.getPublishedMetadata(oaiRecord);
+            Optional<OAIIdentifierDark> oaiIdentifierDarkOptional = oaiIdentifierDarkRepository.findByOaiIdentifier(oaiRecord.getIdentifier());
 
             boolean doesNotContainADarkId = EMPTY.equals(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK));
 
-            if (doesNotContainADarkId) {
-                records.add(new OaiRecordWrapper(oaiRecord, publishedMetadata));
+            if(oaiIdentifierDarkOptional.isPresent()) {
+
+                if(doesNotContainADarkId) {
+                    publishedMetadata.addFieldOcurrence(DC_IDENTIFIER_DARK, oaiIdentifierDarkOptional.get().getDarkIdentifier());
+                    metadataStoreService.updatePublishedMetadata(oaiRecord, publishedMetadata);
+                }
+
+            } else  {
+
+                if(doesNotContainADarkId) {
+                    // Register this item to be processed
+                    recordsToProcess.add(new OaiRecordWrapper(oaiRecord, publishedMetadata));
+                } else {
+                    // The metadata has dc.identifier.dark but is not in "OAIIdentifierDark", then insert it
+                    oaiIdentifierDarkRepository.save(new OAIIdentifierDark(publishedMetadata.getFieldValue(DC_IDENTIFIER_DARK), oaiRecord.getIdentifier()));
+                }
+
             }
+
 
         } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
             logger.error(e);
@@ -141,10 +159,10 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     @Override
     public void postPage() {
 
-        if (!records.isEmpty()) {
+        if (!recordsToProcess.isEmpty()) {
             HttpRequest request = HttpRequest.newBuilder(new URI(hyperdriveUrl))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(new URLAssociationRequest(records, darkCredential.getPrivateKey()).asJson()))
+                    .POST(HttpRequest.BodyPublishers.ofString(new URLAssociationRequest(recordsToProcess, darkCredential.getPrivateKey()).asJson()))
                     .build();
 
             HttpResponse<String> httpResponse = HttpClient.newHttpClient()
@@ -157,7 +175,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                 URLAssociationResponse urlAssociationResponse = URLAssociationResponse.fromString(responseBody);
                 urlAssociationResponse.getIngested_pids().forEach(ingestedPid -> {
 
-                    OaiRecordWrapper oaiRecordWrapper = records.stream().filter(currentRecord ->
+                    OaiRecordWrapper oaiRecordWrapper = recordsToProcess.stream().filter(currentRecord ->
                             currentRecord.getOaiRecordMetadata().getIdentifier().equals(ingestedPid.getOai_id())).findFirst().get();
 
                     String ark = "ark:/" + ingestedPid.getArk();
