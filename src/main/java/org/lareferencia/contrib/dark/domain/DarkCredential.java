@@ -20,12 +20,12 @@
 
 package org.lareferencia.contrib.dark.domain;
 
-import javax.persistence.Column;
-import javax.persistence.Entity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import javax.persistence.Id;
+import jakarta.persistence.Id;
 
 
 /**
