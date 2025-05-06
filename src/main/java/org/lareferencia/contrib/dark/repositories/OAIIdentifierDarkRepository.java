@@ -26,7 +26,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 // import optional class
 import java.util.Optional;
 
-public interface OAIIdentifierDarkRepository extends JpaRepository<OAIIdentifierDark, Long> {
+public interface OAIIdentifierDarkRepository extends JpaRepository<OAIIdentifierDark, String> {
 
     Optional<OAIIdentifierDark> findByOaiIdentifier(String oaiIdentifier);
     Optional<OAIIdentifierDark> findByDarkIdentifier(String darkIdentifier);
