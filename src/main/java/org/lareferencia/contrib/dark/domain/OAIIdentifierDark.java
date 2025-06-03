@@ -51,11 +51,19 @@ public class OAIIdentifierDark {
 	@Column(nullable = false)
 	private LocalDateTime datestamp;
 
+	@Column(nullable = true)
+	private String itemUrl;
 
-	public OAIIdentifierDark(String darkIdentifier, String oaiIdentifier) {
+	@Column(nullable = true)
+	private LocalDateTime lastmodified;
+
+
+	public OAIIdentifierDark(String darkIdentifier, String oaiIdentifier, String itemUrl) {
 		this.darkIdentifier = darkIdentifier;
 		this.oaiIdentifier = oaiIdentifier;
 		this.datestamp = LocalDateTime.now();
+		this.lastmodified = LocalDateTime.now();
+		this.itemUrl = itemUrl;
 	}
 
 	public OAIIdentifierDark() {}
