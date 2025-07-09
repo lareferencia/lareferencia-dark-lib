@@ -132,7 +132,7 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                     break;
             }
 
-        } catch (OAIRecordMetadataParseException | MetadataRecordStoreException e) {
+        } catch (Exception e) {
             logger.error(e);
             throw new RuntimeException("An error has ocurried during the DarkStep", e);
         }
@@ -173,8 +173,8 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     private void sendNewItemsToDark() {
         URLAssociationResponse urlAssociationResponse =
                 HttpUtils.sendMessageToHyperDrive(minterURL,
-                    new URLAssociationRequest(recordsForRegistration, darkCredential.getPrivateKey()),
-                    URLAssociationResponse.class);
+                        new URLAssociationRequest(recordsForRegistration, darkCredential.getPrivateKey()),
+                        URLAssociationResponse.class);
 
         urlAssociationResponse.getIngested_pids().forEach(ingestedPid -> {
 
@@ -188,8 +188,6 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
             oaiIdentifierDarkRepository.save(new OAIIdentifierDark(ark, ingestedPid.getOai_id(), oaiRecordToDarkWrapper.getItemUrlFromCollectedMetadata()));
         });
     }
-
-
 
 
     @Override
