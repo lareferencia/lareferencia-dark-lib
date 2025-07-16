@@ -92,14 +92,6 @@ public class DarkBusinessObject {
         return darkOptional.map(OAIIdentifierDark::getDarkIdentifier).orElse(null);
     }
 
-    public String getDarkIdFromAnySourceIfExists() {
-        if(getDarkIdFromMetadata() != null) {
-            return getDarkIdFromMetadata();
-        }
-        else {
-            return getDarkIdFromTracking();
-        }
-    }
 
     private boolean itemMetadataAlreadyHasDarkId() {
         String darkId = getDarkIdFromMetadata();
