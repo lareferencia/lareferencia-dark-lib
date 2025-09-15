@@ -14,6 +14,7 @@ import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -48,16 +49,24 @@ public class DarkBusinessObject {
                 .filter(identifier -> identifier.startsWith("http://") || identifier.startsWith("https://"))
                 .collect(Collectors.toList());
 
-        return urls.stream()
-                // First option: DOI
-                .filter(url -> url.toLowerCase().matches("https://doi.org/(.*)")).findFirst()
-                // Second option
-                .orElseGet(() ->  urls.stream().filter(url -> url.toLowerCase().matches("http(.*)/handle/(.*)")).findFirst()
-                        // If there's no DOI or Handle we choose the URL with greatest lenght
-                        .orElseGet(() -> urls.stream().collect(
+        if(!urls.isEmpty()) {
+            String choosenUrl = urls.stream()
+                    // First option: DOI
+                    .filter(url -> url.toLowerCase().matches("https://doi.org/(.*)")).findFirst()
+                    // Second option
+                    .orElseGet(() -> urls.stream().filter(url -> url.toLowerCase().matches("http(.*)/handle/(.*)")).findFirst()
+                            // If there's no DOI or Handle we choose the URL with greatest lenght
+                            .orElseGet(() -> {
+                                Map.Entry<Integer, String> candidate = urls.stream().collect(
                                         Collectors.toMap(
-                                                        String::length, String::trim, (o1, o2) -> o1, TreeMap::new)
-                                                    ).descendingMap().firstEntry().getValue()));
+                                                String::length, String::trim, (o1, o2) -> o1, TreeMap::new)
+                                ).descendingMap().firstEntry();
+                                return candidate != null ? candidate.getValue() : urls.get(0);
+                            }));
+            return choosenUrl;
+        }
+
+        return "";
     }
 
 

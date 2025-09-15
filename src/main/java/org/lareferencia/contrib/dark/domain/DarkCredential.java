@@ -35,16 +35,15 @@ import javax.persistence.Id;
 @Setter
 @NoArgsConstructor
 public class DarkCredential {
-	
+
 	@Id
+	@Column(nullable = false, name = "network_id")
+	private Long networkId;
+
 	protected Long naan = null;
 
 	@Column(nullable = false)
 	private String privateKey;
-
-	@Column(nullable = false, name = "network_id")
-	private Long networkId;
-
 
 	public DarkCredential(Long naan, String privateKey) {
 		this.naan = naan;
