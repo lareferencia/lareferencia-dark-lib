@@ -9,16 +9,16 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Getter @Setter
-public class URLAssociationRequest implements MinterHttpRequest {
+public class URLUpdateRequest implements MinterHttpRequest {
 
 
     private String dnam_pk;
-    private List<OaiIdentifierToURL> items;
+    private List<DarkIdentifierToURL> items;
 
-    public URLAssociationRequest(List<DarkBusinessObject> recordsToProcess, String privateKey) {
+    public URLUpdateRequest(List<DarkBusinessObject> recordsToProcess, String privateKey) {
         this.dnam_pk = privateKey;
-        this.items = recordsToProcess.stream().map(oaiRecord -> new OaiIdentifierToURL(
-                oaiRecord.getOaiRecordMetadata().getIdentifier(),
+        this.items = recordsToProcess.stream().map(oaiRecord -> new DarkIdentifierToURL(
+                oaiRecord.getDarkIdFromTracking(),
                 oaiRecord.getItemUrlFromCollectedMetadata()))
                 .collect(Collectors.toList());
     }
@@ -33,13 +33,13 @@ public class URLAssociationRequest implements MinterHttpRequest {
 
     @Override
     public String operation() {
-        return "/load";
+        return "/update";
     }
 
     @Getter @Setter @NoArgsConstructor @AllArgsConstructor
-    public static class OaiIdentifierToURL implements Serializable {
+    public static class DarkIdentifierToURL implements Serializable {
 
-        private String oai_id;
+        private String dark_id;
         private String url;
 
     }

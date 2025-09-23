@@ -19,14 +19,4 @@ public class DarkRecord {
     private String oaiIdentifier;
     private String year;
 
-
-    public DarkRecord(OAIRecord oaiRecord, OAIRecordMetadata oaiRecordMetadata, DarkId darkId) {
-        this.oaiRecord = oaiRecord;
-        this.oaiIdentifier = oaiRecord.getIdentifier();
-        this.oaiRecordMetadata = oaiRecordMetadata;
-        this.darkId = darkId;
-        this.url = oaiRecordMetadata.getFieldOcurrences("dc.identifier.*").stream().filter(identifier -> identifier.startsWith("http://") || identifier.startsWith("https://")).findFirst().get();
-
-    }
-
 }
