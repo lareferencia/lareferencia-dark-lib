@@ -27,6 +27,10 @@ public class HttpUtils {
                 .timeout(Duration.of(90, ChronoUnit.SECONDS))
                 .build();
 
+        // debug the request url and body
+        logger.debug("Sending the following request to hyperdrive [{}] for operation [{}]", request.uri(), minterRequest.operation());
+        logger.trace("Request body: {}", minterRequest.asJson());       
+
         HttpResponse<String> httpResponse = HttpClient.newHttpClient()
                 .send(request, HttpResponse.BodyHandlers.ofString());
 
