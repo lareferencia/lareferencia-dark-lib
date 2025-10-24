@@ -18,48 +18,18 @@
  *   For any further information please contact Lautaro Matas <lmatas@gmail.com>
  */
 
-package org.lareferencia.contrib.dark.domain;
+package org.lareferencia.contrib.dark.repositories;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-import jakarta.persistence.Id;
+import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
+import org.springframework.data.jpa.repository.JpaRepository;
 
+// import optional class
+import java.util.Optional;
 
-/**
- */
-@Entity
-@Getter
-@Setter
-@NoArgsConstructor
-public class DarkCredential {
+public interface OAIIdentifierDarkRepository extends JpaRepository<OAIIdentifierDark, String> {
 
-	@Id
-	@Column(nullable = false, name = "network_id")
-	private Long networkId;
-
-	protected Long naan = null;
-
-	@Column(nullable = false)
-	private String privateKey;
-
-	public DarkCredential(Long naan, String privateKey) {
-		this.naan = naan;
-		this.privateKey = privateKey;
-	}
-
-
-	public DarkCredential(Long naan, String privateKey, Long networkId) {
-		this.naan = naan;
-		this.privateKey = privateKey;
-		this.networkId = networkId;
-	}
-
-	public String toString() {
-		return  "naan=" + naan +", privateKey='" + privateKey + '\'' +", networkId=" + networkId;
-	}	
-
-
+    Optional<OAIIdentifierDark> findByOaiIdentifier(String oaiIdentifier);
+    Optional<OAIIdentifierDark> findByDarkIdentifier(String darkIdentifier);
 }
+
+

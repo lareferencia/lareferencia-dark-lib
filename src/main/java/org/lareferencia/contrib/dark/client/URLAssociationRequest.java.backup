@@ -1,0 +1,46 @@
+package org.lareferencia.contrib.dark.client;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.*;
+import org.lareferencia.contrib.dark.vo.DarkBusinessObject;
+
+import java.io.Serializable;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Getter @Setter
+public class URLAssociationRequest implements MinterHttpRequest {
+
+
+    private String dnam_pk;
+    private List<OaiIdentifierToURL> items;
+
+    public URLAssociationRequest(List<DarkBusinessObject> recordsToProcess, String privateKey) {
+        this.dnam_pk = privateKey;
+        this.items = recordsToProcess.stream().map(oaiRecord -> new OaiIdentifierToURL(
+                oaiRecord.getOaiRecordMetadata().getIdentifier(),
+                oaiRecord.getItemUrlFromCollectedMetadata()))
+                .collect(Collectors.toList());
+    }
+
+    @SneakyThrows
+    public String asJson() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        return objectMapper
+                .writerWithDefaultPrettyPrinter()
+                .writeValueAsString(this);
+    }
+
+    @Override
+    public String operation() {
+        return "/load";
+    }
+
+    @Getter @Setter @NoArgsConstructor @AllArgsConstructor
+    public static class OaiIdentifierToURL implements Serializable {
+
+        private String oai_id;
+        private String url;
+
+    }
+}

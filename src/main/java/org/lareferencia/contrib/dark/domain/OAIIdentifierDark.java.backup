@@ -20,12 +20,18 @@
 
 package org.lareferencia.contrib.dark.domain;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+
+import org.lareferencia.contrib.dark.vo.DarkRecord;
+
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
-import jakarta.persistence.Id;
+
+import java.time.LocalDateTime;
 
 
 /**
@@ -33,33 +39,33 @@ import jakarta.persistence.Id;
 @Entity
 @Getter
 @Setter
-@NoArgsConstructor
-public class DarkCredential {
+public class OAIIdentifierDark {
 
 	@Id
-	@Column(nullable = false, name = "network_id")
-	private Long networkId;
-
-	protected Long naan = null;
+	@Column(nullable = false)
+	private String darkIdentifier;
 
 	@Column(nullable = false)
-	private String privateKey;
+	private String oaiIdentifier;
 
-	public DarkCredential(Long naan, String privateKey) {
-		this.naan = naan;
-		this.privateKey = privateKey;
+	@Column(nullable = false)
+	private LocalDateTime datestamp;
+
+	@Column(nullable = true)
+	private String itemUrl;
+
+	@Column(nullable = true)
+	private LocalDateTime lastmodified;
+
+
+	public OAIIdentifierDark(String darkIdentifier, String oaiIdentifier, String itemUrl) {
+		this.darkIdentifier = darkIdentifier;
+		this.oaiIdentifier = oaiIdentifier;
+		this.datestamp = LocalDateTime.now();
+		this.lastmodified = LocalDateTime.now();
+		this.itemUrl = itemUrl;
 	}
 
-
-	public DarkCredential(Long naan, String privateKey, Long networkId) {
-		this.naan = naan;
-		this.privateKey = privateKey;
-		this.networkId = networkId;
-	}
-
-	public String toString() {
-		return  "naan=" + naan +", privateKey='" + privateKey + '\'' +", networkId=" + networkId;
-	}	
-
+	public OAIIdentifierDark() {}
 
 }
