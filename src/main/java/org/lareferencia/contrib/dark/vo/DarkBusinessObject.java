@@ -1,14 +1,12 @@
 package org.lareferencia.contrib.dark.vo;
 
 import lombok.Getter;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.lareferencia.backend.domain.IOAIRecord;
 import org.lareferencia.backend.domain.OAIRecord;
-import org.lareferencia.contrib.dark.DarkWorker;
 import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
-import org.lareferencia.contrib.dark.repositories.OAIIdentifierDarkRepository;
-import org.lareferencia.contrib.dark.util.HttpUtils;
-import org.lareferencia.core.metadata.IMetadataRecordStoreService;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
@@ -26,21 +24,17 @@ public class DarkBusinessObject {
 
     public static final String DC_IDENTIFIER_DARK = "dc.identifier.dark";
 
-    private OAIRecord oaiRecord;
+    private IOAIRecord oaiRecord;
     private Optional<OAIIdentifierDark> darkOptional;
     private OAIRecordMetadata oaiRecordMetadata;
-    private IMetadataRecordStoreService metadataStoreService;
-    private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
     private boolean darkTrackingWillBeSaved;
 
 
-    public DarkBusinessObject(OAIRecord oaiRecord, IMetadataRecordStoreService metadataStoreService, OAIIdentifierDarkRepository oaiIdentifierDarkRepository)
+    public DarkBusinessObject(IOAIRecord oaiRecord, OAIRecordMetadata oaiRecordMetadata, Optional<OAIIdentifierDark> darkOptional)
             throws OAIRecordMetadataParseException, MetadataRecordStoreException {
         this.oaiRecord = oaiRecord;
-        this.darkOptional = oaiIdentifierDarkRepository.findByOaiIdentifier(oaiRecord.getIdentifier());
-        this.metadataStoreService = metadataStoreService;
-        this.oaiIdentifierDarkRepository = oaiIdentifierDarkRepository;
-        this.oaiRecordMetadata = metadataStoreService.getPublishedMetadata(oaiRecord);
+        this.darkOptional = darkOptional;
+        this.oaiRecordMetadata = oaiRecordMetadata;
     }
 
     public String getItemUrlFromCollectedMetadata() {
@@ -74,20 +68,28 @@ public class DarkBusinessObject {
         return darkOptional.isPresent() || darkTrackingWillBeSaved;
     }
 
-    private void addDarkIdToInternalTrackingIfNeeded() {
+    public Optional<OAIIdentifierDark> getOptionalDarkIdentifier() {
         if (!isThisATrackedDarkObject() && itemMetadataAlreadyHasDarkId()) {
-            oaiIdentifierDarkRepository.save(
-                    new OAIIdentifierDark(
-                        getDarkIdFromMetadata(),
-                        getIdentifier(),
-                        getItemUrlFromCollectedMetadata()));
-
             this.darkTrackingWillBeSaved = true;
+            return Optional.of(new OAIIdentifierDark(
+                    getDarkIdFromMetadata(),
+                    getIdentifier(),
+                    getItemUrlFromCollectedMetadata()));
+        }
+        return Optional.empty();
+    }
 
+    public Optional<OAIRecordMetadata> getOptionalUpdatedMetadata() {
+
+        boolean doesNotHasDarkIdInMetadata = !itemMetadataAlreadyHasDarkId();
+        if (darkOptional.isPresent() && doesNotHasDarkIdInMetadata) {
+            oaiRecordMetadata.addFieldOcurrence(DarkBusinessObject.DC_IDENTIFIER_DARK, darkOptional.get().getDarkIdentifier());
+            return Optional.of(oaiRecordMetadata);
         }
 
-
+        return Optional.empty();
     }
+    
 
     private String getDarkIdFromMetadata() {
         String darkIdFromMetadata = oaiRecordMetadata.getFieldValue(DC_IDENTIFIER_DARK);
@@ -115,15 +117,7 @@ public class DarkBusinessObject {
         return oaiRecordMetadata.getIdentifier();
     }
 
-    private void addDarkIdToItemMetadataIfNeeded() {
-
-        boolean doesNotHasDarkIdInMetadata = !itemMetadataAlreadyHasDarkId();
-        if (darkOptional.isPresent() && doesNotHasDarkIdInMetadata) {
-            oaiRecordMetadata.addFieldOcurrence(DarkBusinessObject.DC_IDENTIFIER_DARK, darkOptional.get().getDarkIdentifier());
-            metadataStoreService.updatePublishedMetadata(oaiRecord, oaiRecordMetadata);
-        }
-
-    }
+    
 
 
     public boolean needToChangeUrl() {
@@ -149,11 +143,6 @@ public class DarkBusinessObject {
         }
 
         else return Situation.NO_ACTION_NEEDED;
-    }
-
-    public void normalizeMetadataAndTrackingIfNeeded() {
-        addDarkIdToItemMetadataIfNeeded();
-        addDarkIdToInternalTrackingIfNeeded();
     }
 
     public enum Situation {

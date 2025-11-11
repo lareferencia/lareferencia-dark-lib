@@ -24,8 +24,12 @@ package org.lareferencia.contrib.dark;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.SneakyThrows;
+
+import org.apache.hadoop.thirdparty.org.checkerframework.checker.units.qual.A;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.lareferencia.backend.domain.IOAIRecord;
+import org.lareferencia.backend.domain.OAIMetadata;
 import org.lareferencia.backend.domain.OAIRecord;
 import org.lareferencia.contrib.dark.client.*;
 import org.lareferencia.contrib.dark.domain.DarkCredential;
@@ -34,36 +38,47 @@ import org.lareferencia.contrib.dark.repositories.DarkCredentialRepository;
 import org.lareferencia.contrib.dark.repositories.OAIIdentifierDarkRepository;
 import org.lareferencia.contrib.dark.util.HttpUtils;
 import org.lareferencia.contrib.dark.vo.DarkBusinessObject;
-import org.lareferencia.core.metadata.IMetadataRecordStoreService;
+import org.lareferencia.core.metadata.IMetadataStore;
+import org.lareferencia.core.metadata.ISnapshotStore;
 import org.lareferencia.core.metadata.MetadataRecordStoreException;
+import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.metadata.OAIRecordMetadataParseException;
+import org.lareferencia.core.metadata.SnapshotMetadata;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.IPaginator;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 
+import com.codahale.metrics.Snapshot;
+
+import java.lang.foreign.Linker.Option;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
-public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
+public class DarkWorker extends BaseBatchWorker<IOAIRecord, NetworkRunningContext> {
 
     public static final int DARK_PAGE_SIZE = 100;
     public static final String ARK_PREFIX = "ark:/";
 
-    @Autowired
-    private IMetadataRecordStoreService metadataStoreService;
-
-    private static Logger logger = LogManager.getLogger(DarkWorker.class);
+   private static Logger logger = LogManager.getLogger(DarkWorker.class);
 
     private Long snapshotId;
+    private SnapshotMetadata snapshotMetadata;
 
     @Autowired
     private OAIIdentifierDarkRepository oaiIdentifierDarkRepository;
 
     @Autowired
     private DarkCredentialRepository darkCredentialRepository;
+
+    @Autowired
+    private IMetadataStore metadataStore;
+
+    @Autowired
+    private ISnapshotStore snapshotStore;
 
     private DarkCredential darkCredential;
 
@@ -84,19 +99,17 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
     public void preRun() {
 
         // busca el lgk
-        snapshotId = metadataStoreService.findLastHarvestingSnapshot(runningContext.getNetwork());
+        snapshotId = snapshotStore.findLastGoodKnownSnapshot(runningContext.getNetwork());
         darkCredential = darkCredentialRepository.findByNetwork(runningContext.getNetwork().getId());
         recordsForRegistration = new ArrayList<>();
         recordsForUrlUpdate = new ArrayList<>();
 
         if (snapshotId != null) { // solo si existe un lgk
 
-            logger.debug("dARK PID processing: " + snapshotId);
-            // establece una paginator para recorrer los registros que sean validos
-            IPaginator<OAIRecord> validRecordsPaginator = metadataStoreService.getNotInvalidRecordsPaginator(snapshotId);
-            validRecordsPaginator.setPageSize(DARK_PAGE_SIZE);
+            snapshotMetadata = snapshotStore.getSnapshotMetadata(snapshotId);
 
-            this.setPaginator(validRecordsPaginator);
+            logger.debug("dARK PID processing: " + snapshotId);
+ 
 
         } else {
 
@@ -115,13 +128,31 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
 
 
     @Override
-    public void processItem(OAIRecord oaiRecord) {
+    public void processItem(IOAIRecord oaiRecord) {
 
         try {
-            DarkBusinessObject darkBusinessObject =
-                    new DarkBusinessObject(oaiRecord, metadataStoreService, oaiIdentifierDarkRepository);
 
-            darkBusinessObject.normalizeMetadataAndTrackingIfNeeded();
+            String metadataString = metadataStore.getMetadata(snapshotMetadata, oaiRecord.getOriginalMetadataHash());
+
+            OAIRecordMetadata metadata = new OAIRecordMetadata(oaiRecord.getIdentifier(),   metadataString);
+
+            Optional<OAIIdentifierDark> darkOptional = oaiIdentifierDarkRepository.findByOaiIdentifier(oaiRecord.getIdentifier());
+
+            DarkBusinessObject darkBusinessObject = new DarkBusinessObject(oaiRecord, metadata, darkOptional);
+
+            darkBusinessObject.getOptionalDarkIdentifier().ifPresent( oaiIdentifierDark -> {
+                 oaiIdentifierDarkRepository.save(oaiIdentifierDark);
+            });
+
+            darkBusinessObject.getOptionalUpdatedMetadata().ifPresent(oaiRecordMetadata -> {
+                metadataStore.storeAndReturnHash(snapshotMetadata, oaiRecordMetadata.toString());
+                oaiRecord.setPublishedMetadataHash(
+                        metadataStore.storeAndReturnHash(
+                                snapshotMetadata,
+                                oaiRecordMetadata.toString()
+                        )
+                );
+            });
 
             switch (darkBusinessObject.getSituation()) {
                 case NEED_TO_REGISTER:
@@ -129,6 +160,10 @@ public class DarkWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext
                     break;
                 case NEED_TO_UPDATE_URL:
                     recordsForUrlUpdate.add(darkBusinessObject);
+                    break;
+                case NO_ACTION_NEEDED:
+                    break;
+                default:
                     break;
             }
 
