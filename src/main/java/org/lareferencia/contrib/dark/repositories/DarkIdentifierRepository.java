@@ -20,16 +20,17 @@
 
 package org.lareferencia.contrib.dark.repositories;
 
-import org.lareferencia.contrib.dark.domain.OAIIdentifierDark;
+import org.lareferencia.contrib.dark.domain.DarkIdentifier;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-// import optional class
 import java.util.Optional;
 
-public interface OAIIdentifierDarkRepository extends JpaRepository<OAIIdentifierDark, String> {
+/**
+ * Repository for DARK identifier mappings.
+ */
+public interface DarkIdentifierRepository extends JpaRepository<DarkIdentifier, String> {
 
-    Optional<OAIIdentifierDark> findByOaiIdentifier(String oaiIdentifier);
-    Optional<OAIIdentifierDark> findByDarkIdentifier(String darkIdentifier);
+    Optional<DarkIdentifier> findByOaiId(String oaiId);
+    
+    Optional<DarkIdentifier> findByDarkId(String darkId);
 }
-
-

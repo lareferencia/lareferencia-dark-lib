@@ -1,14 +1,19 @@
 package org.lareferencia.contrib.dark.services;
 
 import java.util.Collection;
+import java.util.Optional;
 
-import org.lareferencia.backend.domain.Network;
-import org.lareferencia.backend.repositories.jpa.NetworkRepository;
+import org.lareferencia.core.domain.Network;
+import org.lareferencia.core.repository.jpa.NetworkRepository;
 import org.lareferencia.contrib.dark.domain.DarkCredential;
 import org.lareferencia.contrib.dark.repositories.DarkCredentialRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+/**
+ * Service for managing DARK credentials.
+ * Each network requires a credential (NAAN + private key) to interact with the DARK minter service.
+ */
 @Service
 public class DarkCredentialService {
 
@@ -16,34 +21,36 @@ public class DarkCredentialService {
     private DarkCredentialRepository darkCredentialRepository;
 
     @Autowired
-    NetworkRepository networkRepository;
+    private NetworkRepository networkRepository;
 
-    public DarkCredential createDarkCredential(Long naan, String privateKey) {
-        return darkCredentialRepository.save( new DarkCredential(naan, privateKey) );
+    /**
+     * Creates a new DARK credential for a network.
+     *
+     * @param naan       The Name Assigning Authority Number
+     * @param privateKey The DNAM private key
+     * @param networkId  The network ID to associate with
+     * @return The created credential
+     * @throws IllegalArgumentException if the network is not found
+     */
+    public DarkCredential createDarkCredential(Long naan, String privateKey, Long networkId) {
+        Optional<Network> network = networkRepository.findById(networkId);
+        if (network.isEmpty()) {
+            throw new IllegalArgumentException("Network/Repository " + networkId + " not found");
+        }
+        return darkCredentialRepository.save(new DarkCredential(naan, privateKey, networkId));
     }
 
-    public DarkCredential createDarkCredential(Long naan, String privateKey, Long networkId) throws Exception {
-
-        Network network = networkRepository.findById(networkId).orElse(null);
-
-        if (network == null) {
-            throw new Exception("Network/Repository " + networkId +  " not found");
-        } 
-
-        return darkCredentialRepository.save( new DarkCredential(naan, privateKey, networkId) );
-    }
-
-    public String getPrivateKeyByNAAN(Long naan) {
-        return darkCredentialRepository.findByNetwork(naan).getPrivateKey();
-    }
-
+    /**
+     * Lists all DARK credentials.
+     */
     public Collection<DarkCredential> listDarkCredentials() {
         return darkCredentialRepository.findAll();
     }
 
-    public void deleteDarkCredential(Long naan) {
-        darkCredentialRepository.deleteById(naan);
+    /**
+     * Deletes a DARK credential by network ID.
+     */
+    public void deleteDarkCredential(Long networkId) {
+        darkCredentialRepository.deleteById(networkId);
     }
-
-
 }

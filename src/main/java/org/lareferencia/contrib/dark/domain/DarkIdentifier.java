@@ -22,50 +22,50 @@ package org.lareferencia.contrib.dark.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 
-import org.lareferencia.contrib.dark.vo.DarkRecord;
-
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
 
-
 /**
+ * Entity that maps an OAI identifier to its DARK persistent identifier (ARK).
+ * This is the local tracking record for registered PIDs.
  */
 @Entity
 @Getter
 @Setter
-public class OAIIdentifierDark {
+@NoArgsConstructor
+public class DarkIdentifier {
 
-	@Id
-	@Column(nullable = false)
-	private String darkIdentifier;
+    /** The DARK/ARK identifier (e.g., "ark:/99999/abc123") */
+    @Id
+    @Column(nullable = false)
+    private String darkId;
 
-	@Column(nullable = false)
-	private String oaiIdentifier;
+    /** The OAI identifier from the source repository */
+    @Column(nullable = false)
+    private String oaiId;
 
-	@Column(nullable = false)
-	private LocalDateTime datestamp;
+    /** The resolved URL for this identifier */
+    @Column
+    private String url;
 
-	@Column(nullable = true)
-	private String itemUrl;
+    /** When this identifier was first registered */
+    @Column(nullable = false)
+    private LocalDateTime created;
 
-	@Column(nullable = true)
-	private LocalDateTime lastmodified;
+    /** When this identifier was last updated */
+    @Column
+    private LocalDateTime updated;
 
-
-	public OAIIdentifierDark(String darkIdentifier, String oaiIdentifier, String itemUrl) {
-		this.darkIdentifier = darkIdentifier;
-		this.oaiIdentifier = oaiIdentifier;
-		this.datestamp = LocalDateTime.now();
-		this.lastmodified = LocalDateTime.now();
-		this.itemUrl = itemUrl;
-	}
-
-	public OAIIdentifierDark() {}
-
+    public DarkIdentifier(String darkId, String oaiId, String url) {
+        this.darkId = darkId;
+        this.oaiId = oaiId;
+        this.url = url;
+        this.created = LocalDateTime.now();
+        this.updated = LocalDateTime.now();
+    }
 }
