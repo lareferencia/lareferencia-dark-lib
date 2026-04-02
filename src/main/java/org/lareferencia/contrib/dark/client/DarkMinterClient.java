@@ -1,100 +1,126 @@
 package org.lareferencia.contrib.dark.client;
 
-import lombok.Getter;
-import lombok.Setter;
-import lombok.SneakyThrows;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.lareferencia.contrib.dark.domain.DarkRecordContext;
-import org.springframework.beans.factory.annotation.Value;
+import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * Client for communicating with the DARK Minter service (HyperDrive).
- * Handles PID registration and URL updates.
+ * HTTP client for the new dARK minter API.
  */
 @Component
 public class DarkMinterClient {
 
     private static final Logger logger = LogManager.getLogger(DarkMinterClient.class);
-    private static final Duration REQUEST_TIMEOUT = Duration.of(90, ChronoUnit.SECONDS);
-
-    @Setter
-    @Getter
-    @Value("${dark.minter.url:http://minter.dark-pid.net/}")
-    private String minterUrl;
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(90);
 
     private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
+    private final DarkProperties properties;
 
-    public DarkMinterClient() {
-        this.httpClient = HttpClient.newHttpClient();
+    @Autowired
+    public DarkMinterClient(DarkProperties properties) {
+        this(HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(REQUEST_TIMEOUT)
+                .build(), new ObjectMapper(), properties);
     }
 
-    /**
-     * Registers new PIDs for the given records.
-     *
-     * @param records    List of record contexts to register
-     * @param privateKey The DNAM private key for authentication
-     * @return Response containing the ingested PIDs
-     */
-    public MinterResponse registerPids(List<DarkRecordContext> records, String privateKey) {
-        List<String> oaiIds = records.stream()
-                .map(DarkRecordContext::oaiId)
-                .collect(Collectors.toList());
-        List<String> urls = records.stream()
-                .map(DarkRecordContext::url)
-                .collect(Collectors.toList());
-
-        MinterRequest request = MinterRequest.forRegistration(oaiIds, urls, privateKey);
-        return sendRequest(request);
+    DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties) {
+        this.httpClient = httpClient;
+        this.objectMapper = objectMapper;
+        this.properties = properties;
     }
 
-    /**
-     * Updates URLs for existing PIDs.
-     *
-     * @param records    List of record contexts with updated URLs
-     * @param privateKey The DNAM private key for authentication
-     * @return Response containing the update results
-     */
-    public MinterResponse updateUrls(List<DarkRecordContext> records, String privateKey) {
-        List<String> darkIds = records.stream()
-                .map(DarkRecordContext::getDarkId)
-                .collect(Collectors.toList());
-        List<String> urls = records.stream()
-                .map(DarkRecordContext::url)
-                .collect(Collectors.toList());
-
-        MinterRequest request = MinterRequest.forUpdate(darkIds, urls, privateKey);
-        return sendRequest(request);
+    public ReserveBatchResponse reserveBatch(String authorityId, String naan, List<String> clientItemIds) {
+        ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(authorityId, naan, clientItemIds);
+        return sendJsonRequest(
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/batch"))
+                        .header("Content-Type", "application/json")
+                        .header(properties.getAuthHeaderName(), authorityId)
+                        .POST(HttpRequest.BodyPublishers.ofString(writeJson(request))),
+                ReserveBatchResponse.class);
     }
 
-    @SneakyThrows
-    private MinterResponse sendRequest(MinterRequest minterRequest) {
-        HttpRequest request = HttpRequest.newBuilder(new URI(minterUrl + minterRequest.getEndpoint()))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(minterRequest.toJson()))
-                .timeout(REQUEST_TIMEOUT)
-                .build();
+    public ARKResponse stageArk(String ark, StageArkRequest request) {
+        return sendJsonRequest(
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + ark))
+                        .header("Content-Type", "application/json")
+                        .header(properties.getAuthHeaderName(), request.getAuthorityId())
+                        .PUT(HttpRequest.BodyPublishers.ofString(writeJson(request))),
+                ARKResponse.class);
+    }
 
-        logger.debug("Sending request to HyperDrive [{}] for operation [{}]", 
-                request.uri(), minterRequest.getOperation());
-        logger.trace("Request body: {}", minterRequest.toJson());
+    public ARKResponse getArk(String ark) {
+        return sendJsonRequest(
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + ark))
+                        .GET(),
+                ARKResponse.class);
+    }
 
-        HttpResponse<String> httpResponse = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    private <T> T sendJsonRequest(HttpRequest.Builder builder, Class<T> responseType) {
+        HttpRequest request = builder.timeout(REQUEST_TIMEOUT).build();
+        logger.debug("Calling dARK minter [{} {}]", request.method(), request.uri());
 
-        String responseBody = httpResponse.body();
-        logger.debug("Received status [{}] from HyperDrive: {}",
-                httpResponse.statusCode(), responseBody);
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            String body = response.body();
+            logger.debug("dARK minter responded [{}] {}", response.statusCode(), body);
 
-        return MinterResponse.fromJson(responseBody);
+            if (response.statusCode() >= 400) {
+                String errorMessage = extractErrorMessage(body);
+                logger.warn("dARK minter rejected request [{} {}] with status {} and body {}",
+                        request.method(), request.uri(), response.statusCode(), body);
+                throw new DarkMinterClientException(
+                        response.statusCode(),
+                        request.method(),
+                        request.uri(),
+                        errorMessage,
+                        body);
+            }
+
+            return objectMapper.readValue(body, responseType);
+        } catch (IOException e) {
+            throw new DarkMinterClientException(500, request.method(), request.uri(), "I/O error calling dARK minter", null, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DarkMinterClientException(500, request.method(), request.uri(), "Interrupted while calling dARK minter", null, e);
+        }
+    }
+
+    private URI buildUri(String path) {
+        String baseUrl = properties.getMinter().getBaseUrl();
+        String normalizedBase = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return URI.create(normalizedBase + path);
+    }
+
+    private String writeJson(Object payload) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (IOException e) {
+            throw new DarkMinterClientException(500, "Unable to serialize dARK request", e);
+        }
+    }
+
+    private String extractErrorMessage(String body) {
+        if (body == null || body.isBlank()) {
+            return "Empty error response from dARK minter";
+        }
+
+        try {
+            return objectMapper.readTree(body).path("detail").asText(body);
+        } catch (IOException e) {
+            return body;
+        }
     }
 }

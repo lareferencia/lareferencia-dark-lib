@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -33,9 +34,14 @@ public class UrlExtractionService {
                 .orElseGet(() -> findLongestUrl(urls));
     }
 
-    private List<String> extractHttpUrls(OAIRecordMetadata metadata) {
+    public List<String> extractHttpUrls(OAIRecordMetadata metadata) {
         return metadata.getFieldOcurrences("dc.identifier.*").stream()
-                .filter(id -> id.startsWith("http://") || id.startsWith("https://"))
+                .filter(id -> {
+                    String value = id == null ? "" : id.trim().toLowerCase(Locale.ROOT);
+                    return value.startsWith("http://") || value.startsWith("https://");
+                })
+                .map(String::trim)
+                .distinct()
                 .collect(Collectors.toList());
     }
 
