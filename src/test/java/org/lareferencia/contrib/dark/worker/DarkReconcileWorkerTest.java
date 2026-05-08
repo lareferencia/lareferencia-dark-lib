@@ -81,7 +81,7 @@ class DarkReconcileWorkerTest {
         worker.processItem(record);
 
         assertEquals(DarkTrackingState.ERROR, record.getState());
-        assertEquals("ARK not found", record.getLastError());
+        assertEquals("dARK minter error 404: ARK not found", record.getLastError());
         verify(darkTrackingRepository).save(record);
     }
 }

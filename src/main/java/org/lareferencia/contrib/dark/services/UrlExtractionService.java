@@ -35,13 +35,23 @@ public class UrlExtractionService {
     }
 
     public List<String> extractHttpUrls(OAIRecordMetadata metadata) {
-        return metadata.getFieldOcurrences("dc.identifier.*").stream()
+        return fieldOccurrences(metadata, "dc.identifier").stream()
                 .filter(id -> {
                     String value = id == null ? "" : id.trim().toLowerCase(Locale.ROOT);
                     return value.startsWith("http://") || value.startsWith("https://");
                 })
                 .map(String::trim)
                 .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private List<String> fieldOccurrences(OAIRecordMetadata metadata, String fieldName) {
+        List<String> occurrences = metadata.getFieldOcurrences(fieldName);
+        List<String> qualifiedOccurrences = metadata.getFieldOcurrences(fieldName + ".*");
+        if (qualifiedOccurrences.isEmpty()) {
+            return occurrences;
+        }
+        return java.util.stream.Stream.concat(occurrences.stream(), qualifiedOccurrences.stream())
                 .collect(Collectors.toList());
     }
 
@@ -53,7 +63,10 @@ public class UrlExtractionService {
 
     private Optional<String> findHandleUrl(List<String> urls) {
         return urls.stream()
-                .filter(url -> url.toLowerCase().contains("/handle/"))
+                .filter(url -> {
+                    String normalized = url.toLowerCase();
+                    return normalized.contains("/handle/") || normalized.startsWith("https://hdl.handle.net/");
+                })
                 .findFirst();
     }
 

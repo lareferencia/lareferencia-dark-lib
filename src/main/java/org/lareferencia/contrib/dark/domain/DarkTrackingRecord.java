@@ -20,7 +20,8 @@ import java.util.Objects;
         name = "dark_tracking_record",
         indexes = {
                 @Index(name = "idx_dark_tracking_ark", columnList = "ark"),
-                @Index(name = "idx_dark_tracking_state", columnList = "state")
+                @Index(name = "idx_dark_tracking_state", columnList = "state"),
+                @Index(name = "idx_dark_tracking_reconcile", columnList = "ark_naan, state, oai_id")
         })
 @Getter
 @Setter

@@ -20,14 +20,14 @@ public class DarkLevel1MetadataService {
     private static final Pattern YEAR_PATTERN = Pattern.compile("(19|20)\\d{2}");
 
     public Map<String, Object> buildMinimalMetadata(String oaiId, OAIRecordMetadata metadata, String targetUrl) {
-        String title = firstNonBlank(metadata.getFieldOcurrences("dc.title.*"))
+        String title = firstNonBlank(fieldOccurrences(metadata, "dc.title"))
                 .orElseThrow(() -> new IllegalArgumentException("Missing dc.title"));
-        List<String> authors = dedupe(metadata.getFieldOcurrences("dc.creator.*"));
+        List<String> authors = dedupe(fieldOccurrences(metadata, "dc.creator"));
         if (authors.isEmpty()) {
             throw new IllegalArgumentException("Missing dc.creator");
         }
 
-        Integer year = extractYear(metadata.getFieldOcurrences("dc.date.*"))
+        Integer year = extractYear(fieldOccurrences(metadata, "dc.date"))
                 .orElseThrow(() -> new IllegalArgumentException("Missing parseable dc.date year"));
 
         LinkedHashMap<String, Object> minimalMetadata = new LinkedHashMap<>();
@@ -35,17 +35,17 @@ public class DarkLevel1MetadataService {
         minimalMetadata.put("authors", authors);
         minimalMetadata.put("year", year);
 
-        putIfPresent(minimalMetadata, "publisher", firstNonBlank(metadata.getFieldOcurrences("dc.publisher.*")).orElse(null));
-        putIfPresent(minimalMetadata, "resource_type", firstNonBlank(metadata.getFieldOcurrences("dc.type.*")).orElse(null));
-        putIfPresent(minimalMetadata, "language", normalizeLanguage(firstNonBlank(metadata.getFieldOcurrences("dc.language.*")).orElse(null)));
+        putIfPresent(minimalMetadata, "publisher", firstNonBlank(fieldOccurrences(metadata, "dc.publisher")).orElse(null));
+        putIfPresent(minimalMetadata, "resource_type", firstNonBlank(fieldOccurrences(metadata, "dc.type")).orElse(null));
+        putIfPresent(minimalMetadata, "language", normalizeLanguage(firstNonBlank(fieldOccurrences(metadata, "dc.language")).orElse(null)));
         putIfPresent(minimalMetadata, "abstract", extractAbstract(metadata));
 
-        List<String> subjects = dedupe(metadata.getFieldOcurrences("dc.subject.*"));
+        List<String> subjects = dedupe(fieldOccurrences(metadata, "dc.subject"));
         if (!subjects.isEmpty()) {
             minimalMetadata.put("subjects", subjects);
         }
 
-        putIfPresent(minimalMetadata, "rights", firstNonBlank(metadata.getFieldOcurrences("dc.rights.*")).orElse(null));
+        putIfPresent(minimalMetadata, "rights", firstNonBlank(fieldOccurrences(metadata, "dc.rights")).orElse(null));
 
         List<Map<String, String>> alternateIdentifiers = buildAlternateIdentifiers(oaiId, metadata, targetUrl);
         if (!alternateIdentifiers.isEmpty()) {
@@ -64,7 +64,7 @@ public class DarkLevel1MetadataService {
         LinkedHashMap<String, Map<String, String>> identifiers = new LinkedHashMap<>();
         addIdentifier(identifiers, "oai", oaiId);
 
-        for (String value : dedupe(metadata.getFieldOcurrences("dc.identifier.*"))) {
+        for (String value : dedupe(fieldOccurrences(metadata, "dc.identifier"))) {
             if (value.equals(targetUrl) || isHttpUrl(value)) {
                 continue;
             }
@@ -76,7 +76,7 @@ public class DarkLevel1MetadataService {
 
     private List<String> buildAlternateUrls(OAIRecordMetadata metadata, String targetUrl) {
         Set<String> urls = new LinkedHashSet<>();
-        for (String value : metadata.getFieldOcurrences("dc.identifier.*")) {
+        for (String value : fieldOccurrences(metadata, "dc.identifier")) {
             if (!isHttpUrl(value)) {
                 continue;
             }
@@ -129,11 +129,22 @@ public class DarkLevel1MetadataService {
     }
 
     private String extractAbstract(OAIRecordMetadata metadata) {
-        Optional<String> preferred = firstNonBlank(metadata.getFieldOcurrences("dc.description.abstract.*"));
+        Optional<String> preferred = firstNonBlank(fieldOccurrences(metadata, "dc.description.abstract"));
         if (preferred.isPresent()) {
             return preferred.get();
         }
-        return firstNonBlank(metadata.getFieldOcurrences("dc.description.*")).orElse(null);
+        return firstNonBlank(fieldOccurrences(metadata, "dc.description")).orElse(null);
+    }
+
+    private List<String> fieldOccurrences(OAIRecordMetadata metadata, String fieldName) {
+        List<String> occurrences = metadata.getFieldOcurrences(fieldName);
+        List<String> qualifiedOccurrences = metadata.getFieldOcurrences(fieldName + ".*");
+        if (qualifiedOccurrences.isEmpty()) {
+            return occurrences;
+        }
+        List<String> result = new ArrayList<>(occurrences);
+        result.addAll(qualifiedOccurrences);
+        return result;
     }
 
     private Optional<String> firstNonBlank(List<String> values) {

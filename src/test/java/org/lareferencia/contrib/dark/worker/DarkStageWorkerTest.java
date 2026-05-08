@@ -17,10 +17,12 @@ import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
 import org.lareferencia.contrib.dark.services.DarkOriginalMetadataTransformerService;
 import org.lareferencia.contrib.dark.services.DarkProperties;
 import org.lareferencia.contrib.dark.services.UrlExtractionService;
+import org.lareferencia.core.domain.Network;
 import org.lareferencia.core.metadata.IMetadataStore;
 import org.lareferencia.core.metadata.SnapshotMetadata;
 import org.lareferencia.core.repository.catalog.CatalogDatabaseManager;
 import org.lareferencia.core.repository.catalog.OAIRecord;
+import org.lareferencia.core.worker.NetworkRunningContext;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -83,6 +85,7 @@ class DarkStageWorkerTest {
         ReflectionTestUtils.setField(worker, "currentArkNaan", "12345");
         ReflectionTestUtils.setField(worker, "currentSourceMetadataSchema", "xoai");
         ReflectionTestUtils.setField(worker, "currentTargetMetadataSchema", "dublin_core");
+        ReflectionTestUtils.setField(worker, "runningContext", new NetworkRunningContext(mockNetwork()));
     }
 
     @Test
@@ -155,5 +158,11 @@ class DarkStageWorkerTest {
 
     private SnapshotMetadata mockSnapshot() {
         return mock(SnapshotMetadata.class);
+    }
+
+    private Network mockNetwork() {
+        Network network = new Network();
+        network.setAcronym("TEST");
+        return network;
     }
 }

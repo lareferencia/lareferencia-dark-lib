@@ -15,7 +15,9 @@ import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.EnumSet;
 
 public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, NetworkRunningContext> {
@@ -51,23 +53,32 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
     private int runUpdated;
     private int runTombstone;
     private int runErrors;
+    private long runInitialPending;
+    private LocalDateTime runStartedAt;
+    private Collection<DarkTrackingState> reconcileStates;
 
     @Override
     protected void preRun() {
         setPageSize(darkProperties.getReconcilePageSize());
         currentArkNaan = darkNetworkSettingsResolver.resolveArkNaan(runningContext.getNetwork());
         resetRunCounters();
+        runStartedAt = LocalDateTime.now();
+        reconcileStates = EnumSet.of(DarkTrackingState.DRAFT, DarkTrackingState.UPDATE, DarkTrackingState.ERROR);
+        runInitialPending = darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(
+                currentArkNaan,
+                reconcileStates);
         DarkTrackingPaginator paginator = new DarkTrackingPaginator(
                 darkTrackingRepository,
                 currentArkNaan,
-                EnumSet.of(DarkTrackingState.DRAFT, DarkTrackingState.UPDATE, DarkTrackingState.ERROR));
+                reconcileStates);
         paginator.setPageSize(getPageSize());
         setPaginator(paginator);
         logger.info(
-                "DARK reconcile run configured for network {} | arkNaan={} | pageSize={}",
+                "DARK reconcile run configured for network {} | arkNaan={} | pageSize={} | initialPending={}",
                 runningContext.getNetwork().getAcronym(),
                 currentArkNaan,
-                getPageSize());
+                getPageSize(),
+                runInitialPending);
     }
 
     @Override
@@ -137,10 +148,17 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     protected void postRun() {
+        long remainingPending = darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(
+                currentArkNaan,
+                reconcileStates);
+        long durationSeconds = runStartedAt == null ? 0 : Duration.between(runStartedAt, LocalDateTime.now()).toSeconds();
         logger.info(
-                "DARK reconcile run summary for network {} | processed={} | skippedWithoutArk={} | published={} | reserved={} | draft={} | update={} | tombstone={} | errors={}",
+                "DARK reconcile run summary for network {} | processed={} | initialPending={} | remainingPending={} | durationSeconds={} | skippedWithoutArk={} | published={} | reserved={} | draft={} | update={} | tombstone={} | errors={}",
                 runningContext.getNetwork().getAcronym(),
                 runProcessed,
+                runInitialPending,
+                remainingPending,
+                durationSeconds,
                 runSkippedWithoutArk,
                 runPublished,
                 runReserved,
@@ -184,5 +202,8 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
         runUpdated = 0;
         runTombstone = 0;
         runErrors = 0;
+        runInitialPending = 0;
+        runStartedAt = null;
+        reconcileStates = null;
     }
 }

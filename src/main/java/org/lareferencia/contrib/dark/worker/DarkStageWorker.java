@@ -471,7 +471,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     }
 
     private void addSnapshotLogEntry(String level, String message) {
-        if (snapshotMetadata == null || snapshotMetadata.getSnapshotId() == null) {
+        if (snapshotLogService == null || snapshotMetadata == null || snapshotMetadata.getSnapshotId() == null) {
             return;
         }
         snapshotLogService.addEntry(snapshotMetadata.getSnapshotId(), level + ": " + message);
