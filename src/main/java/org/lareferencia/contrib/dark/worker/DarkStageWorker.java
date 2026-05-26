@@ -94,6 +94,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     private int runStageSuccesses;
     private int runReserveFailures;
     private int runStageFailures;
+    private boolean pageHaltedBySystemicError;
 
     @Override
     protected void preRun() {
@@ -160,6 +161,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         pageStageSuccesses = 0;
         pageReserveFailures = 0;
         pageStageFailures = 0;
+        pageHaltedBySystemicError = false;
     }
 
     @Override
@@ -238,7 +240,9 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     @Override
     public void postPage() {
         reservePendingRecords();
-        stagePendingRecords(recordsToStage);
+        if (!pageHaltedBySystemicError) {
+            stagePendingRecords(recordsToStage);
+        }
         logInfo(String.format(
                 "DARK stage page summary for network %s | processed=%s | queuedForReserve=%s | queuedForStage=%s | unchanged=%s | errors=%s | stageSuccesses=%s | reserveFailures=%s | stageFailures=%s",
                 runningContext.getNetwork().getAcronym(),
@@ -292,11 +296,15 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         }
 
         for (List<DarkStageCandidate> chunk : chunks(recordsToReserve, darkProperties.getReserveBatchSize())) {
+            if (pageHaltedBySystemicError) {
+                break;
+            }
             logInfo("DARK stage reserving " + chunk.size() + " ARKs for network " + runningContext.getNetwork().getAcronym());
             ReserveBatchResponse response = darkMinterClient.reserveBatch(
                     darkProperties.getAuthorityId(),
                     currentArkNaan,
                     chunk.stream().map(DarkStageCandidate::getOaiId).toList());
+            failOnSystemicReservationFailure(response, chunk.size());
 
             Map<String, ARKResponse> resultsByItemId = new HashMap<>();
             for (ARKResponse result : response.getResults()) {
@@ -324,8 +332,33 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             }
 
             stagePendingRecords(reservedCandidates);
+            if (pageHaltedBySystemicError) {
+                break;
+            }
         }
         recordsToReserve.clear();
+    }
+
+    private void failOnSystemicReservationFailure(ReserveBatchResponse response, int requestedCount) {
+        if (response.getErrors() == null || response.getErrors().isEmpty()) {
+            return;
+        }
+
+        int resultCount = response.getResults() == null ? 0 : response.getResults().size();
+        if (resultCount > 0 || response.getErrors().size() < requestedCount) {
+            return;
+        }
+
+        Optional<String> systemicError = response.getErrors().stream()
+                .map(ReserveBatchResponse.BatchError::getError)
+                .filter(DarkMinterClientException::isSystemicMessage)
+                .findFirst();
+
+        if (systemicError.isPresent()) {
+            throw new DarkMinterClientException(
+                    500,
+                    "dARK minter reservation batch failed before allocating ARKs: " + systemicError.get());
+        }
     }
 
     private void stagePendingRecords(List<DarkStageCandidate> candidates) {
@@ -350,6 +383,16 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 ARKResponse response = darkMinterClient.stageArk(ark, request);
                 persistSuccess(candidate, response);
             } catch (DarkMinterClientException e) {
+                if (e.isSystemic()) {
+                    logError("DARK stage stopping because dARK minter failed while staging record "
+                            + candidate.getOaiId() + ": " + e.getMessage());
+                    if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
+                        persistReservedFailure(candidate, e.getMessage());
+                    }
+                    pageHaltedBySystemicError = true;
+                    stop();
+                    return;
+                }
                 if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
                     logWarn("DARK stage failed after reserving ARK " + ark + " for record " + candidate.getOaiId() + ": " + e.getMessage());
                     persistReservedFailure(candidate, e.getMessage());

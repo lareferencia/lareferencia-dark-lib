@@ -18,6 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -83,5 +85,23 @@ class DarkReconcileWorkerTest {
         assertEquals(DarkTrackingState.ERROR, record.getState());
         assertEquals("dARK minter error 404: ARK not found", record.getLastError());
         verify(darkTrackingRepository).save(record);
+    }
+
+    @Test
+    @DisplayName("Stop without marking record error when minter failure is systemic")
+    void stopsOnSystemicFailure() {
+        DarkTrackingRecord record = new DarkTrackingRecord();
+        record.setOaiId("oai:test:3");
+        record.setArkNaan("12345");
+        record.setArk("ark:/12345/systemic");
+        record.setState(DarkTrackingState.DRAFT);
+
+        when(darkMinterClient.getArk("ark:/12345/systemic"))
+                .thenThrow(new DarkMinterClientException(500, "Internal server error"));
+
+        assertThrows(DarkMinterClientException.class, () -> worker.processItem(record));
+
+        assertEquals(DarkTrackingState.DRAFT, record.getState());
+        verify(darkTrackingRepository, never()).save(record);
     }
 }

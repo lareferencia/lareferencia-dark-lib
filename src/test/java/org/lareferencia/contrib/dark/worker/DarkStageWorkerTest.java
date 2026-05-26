@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.lareferencia.contrib.dark.client.ARKResponse;
 import org.lareferencia.contrib.dark.client.DarkMinterClient;
+import org.lareferencia.contrib.dark.client.DarkMinterClientException;
 import org.lareferencia.contrib.dark.client.DarkRemoteState;
 import org.lareferencia.contrib.dark.client.ReserveBatchResponse;
 import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -154,6 +156,69 @@ class DarkStageWorkerTest {
         verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
         verify(darkMinterClient, never()).stageArk(any(), any());
         verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
+    }
+
+    @Test
+    @DisplayName("Stop on systemic minter reservation failure")
+    void stopsOnSystemicReservationFailure() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:3", null, "hash-3", false);
+        when(metadataStore.getMetadata(any(), eq("hash-3"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:3"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/3");
+        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:3"), any(), eq("https://example.org/resource/3")))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:3"))).thenReturn(Optional.empty());
+
+        ReserveBatchResponse reserveResponse = new ReserveBatchResponse();
+        ReserveBatchResponse.BatchError batchError = new ReserveBatchResponse.BatchError();
+        batchError.setClientItemId("oai:test:3");
+        batchError.setError("(psycopg2.errors.InFailedSqlTransaction) current transaction is aborted, commands ignored until end of transaction block");
+        reserveResponse.setErrors(List.of(batchError));
+        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:3")))
+                .thenReturn(reserveResponse);
+
+        worker.prePage();
+        worker.processItem(record);
+
+        assertThrows(DarkMinterClientException.class, () -> worker.postPage());
+        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
+    }
+
+    @Test
+    @DisplayName("Stop on systemic stage failure and keep reserved ARK retryable")
+    void stopsOnSystemicStageFailureAfterReservation() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:4", null, "hash-4", false);
+        when(metadataStore.getMetadata(any(), eq("hash-4"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:4"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/4");
+        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:4"), any(), eq("https://example.org/resource/4")))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:4"))).thenReturn(Optional.empty());
+
+        ReserveBatchResponse reserveResponse = new ReserveBatchResponse();
+        ARKResponse reserveItem = new ARKResponse();
+        reserveItem.setArk("ark:/12345/retry");
+        reserveItem.setState(DarkRemoteState.RESERVED);
+        reserveItem.setClientItemId("oai:test:4");
+        reserveResponse.setResults(List.of(reserveItem));
+        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:4")))
+                .thenReturn(reserveResponse);
+        when(darkMinterClient.stageArk(eq("ark:/12345/retry"), any()))
+                .thenThrow(new DarkMinterClientException(500, "Internal server error"));
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        ArgumentCaptor<DarkTrackingRecord> captor = ArgumentCaptor.forClass(DarkTrackingRecord.class);
+        verify(darkTrackingRepository).save(captor.capture());
+        DarkTrackingRecord saved = captor.getValue();
+        assertEquals("oai:test:4", saved.getOaiId());
+        assertEquals("ark:/12345/retry", saved.getArk());
+        assertEquals(DarkTrackingState.ERROR, saved.getState());
     }
 
     private SnapshotMetadata mockSnapshot() {
