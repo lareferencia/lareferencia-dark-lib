@@ -19,10 +19,34 @@ public class DarkProperties {
     private int reserveBatchSize = 100;
     private int reconcilePageSize = 100;
 
+    public String getAuthorityId() {
+        return normalize(authorityId);
+    }
+
+    public void setAuthorityId(String authorityId) {
+        this.authorityId = normalize(authorityId);
+    }
+
+    public String getAuthHeaderName() {
+        return normalize(authHeaderName);
+    }
+
+    public void setAuthHeaderName(String authHeaderName) {
+        this.authHeaderName = normalize(authHeaderName);
+    }
+
     @Getter
     @Setter
     public static class Minter {
         private String baseUrl = "http://localhost:8001";
+
+        public String getBaseUrl() {
+            return normalize(baseUrl);
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = normalize(baseUrl);
+        }
     }
 
     @Getter
@@ -33,24 +57,28 @@ public class DarkProperties {
     }
 
     public String getMetadataSchema() {
-        return metadata != null ? metadata.getSchema() : null;
+        return metadata != null ? normalize(metadata.getSchema()) : null;
     }
 
     public void setMetadataSchema(String metadataSchema) {
         if (metadata == null) {
             metadata = new Metadata();
         }
-        metadata.setSchema(metadataSchema);
+        metadata.setSchema(normalize(metadataSchema));
     }
 
     public String getMetadataMediaType() {
-        return metadata != null ? metadata.getMediaType() : null;
+        return metadata != null ? normalize(metadata.getMediaType()) : null;
     }
 
     public void setMetadataMediaType(String metadataMediaType) {
         if (metadata == null) {
             metadata = new Metadata();
         }
-        metadata.setMediaType(metadataMediaType);
+        metadata.setMediaType(normalize(metadataMediaType));
+    }
+
+    private static String normalize(String value) {
+        return value == null ? null : value.trim();
     }
 }

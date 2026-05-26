@@ -27,7 +27,11 @@ public class ReserveBatchRequest {
         List<ReserveBatchItem> items = clientItemIds.stream()
                 .map(ReserveBatchItem::new)
                 .toList();
-        return new ReserveBatchRequest(authorityId, naan, items);
+        return new ReserveBatchRequest(normalize(authorityId), normalize(naan), items);
+    }
+
+    private static String normalize(String value) {
+        return value == null ? null : value.trim();
     }
 
     @Getter

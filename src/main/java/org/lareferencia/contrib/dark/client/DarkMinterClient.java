@@ -43,20 +43,24 @@ public class DarkMinterClient {
     }
 
     public ReserveBatchResponse reserveBatch(String authorityId, String naan, List<String> clientItemIds) {
-        ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(authorityId, naan, clientItemIds);
+        String normalizedAuthorityId = normalizeRequired(authorityId, "authorityId");
+        String normalizedNaan = normalizeRequired(naan, "naan");
+        ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(normalizedAuthorityId, normalizedNaan, clientItemIds);
         return sendJsonRequest(
                 HttpRequest.newBuilder(buildUri("/api/v1/arks/batch"))
                         .header("Content-Type", "application/json")
-                        .header(properties.getAuthHeaderName(), authorityId)
+                        .header(authHeaderName(), normalizedAuthorityId)
                         .POST(HttpRequest.BodyPublishers.ofString(writeJson(request))),
                 ReserveBatchResponse.class);
     }
 
     public ARKResponse stageArk(String ark, StageArkRequest request) {
+        String normalizedAuthorityId = normalizeRequired(request.getAuthorityId(), "authorityId");
+        request.setAuthorityId(normalizedAuthorityId);
         return sendJsonRequest(
                 HttpRequest.newBuilder(buildUri("/api/v1/arks/" + ark))
                         .header("Content-Type", "application/json")
-                        .header(properties.getAuthHeaderName(), request.getAuthorityId())
+                        .header(authHeaderName(), normalizedAuthorityId)
                         .PUT(HttpRequest.BodyPublishers.ofString(writeJson(request))),
                 ARKResponse.class);
     }
@@ -102,6 +106,18 @@ public class DarkMinterClient {
         String baseUrl = properties.getMinter().getBaseUrl();
         String normalizedBase = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         return URI.create(normalizedBase + path);
+    }
+
+    private String authHeaderName() {
+        return normalizeRequired(properties.getAuthHeaderName(), "authHeaderName");
+    }
+
+    private String normalizeRequired(String value, String label) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isBlank()) {
+            throw new DarkMinterClientException(500, label + " must not be blank");
+        }
+        return normalized;
     }
 
     private String writeJson(Object payload) {

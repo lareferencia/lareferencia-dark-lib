@@ -40,6 +40,18 @@ class DarkMinterClientTest {
     }
 
     @Test
+    @DisplayName("Reserve batch normalizes authority and NAAN")
+    void reserveBatchNormalizesAuthorityAndNaan() {
+        ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(
+                " resolver-e2e-1779799552\t",
+                " 12345 ",
+                List.of("oai:1"));
+
+        assertEquals("resolver-e2e-1779799552", request.getAuthorityId());
+        assertEquals("12345", request.getNaan());
+    }
+
+    @Test
     @DisplayName("Get ARK parses remote state")
     void getArkParsesState() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);
@@ -75,8 +87,12 @@ class DarkMinterClientTest {
 
     private DarkProperties properties() {
         DarkProperties properties = new DarkProperties();
-        properties.setAuthorityId("authority-1");
-        properties.getMinter().setBaseUrl("http://localhost:8001");
+        properties.setAuthorityId(" authority-1\t");
+        properties.setAuthHeaderName(" X-Authority-Id ");
+        properties.getMinter().setBaseUrl(" http://localhost:8001 ");
+        assertEquals("authority-1", properties.getAuthorityId());
+        assertEquals("X-Authority-Id", properties.getAuthHeaderName());
+        assertEquals("http://localhost:8001", properties.getMinter().getBaseUrl());
         return properties;
     }
 
