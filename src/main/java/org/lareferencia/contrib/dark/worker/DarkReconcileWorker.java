@@ -121,7 +121,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
             darkTrackingRepository.save(record);
             incrementStateCounters(remoteState);
         } catch (DarkMinterClientException e) {
-            if (e.isSystemic()) {
+            if (e.isRetryable() || e.isSystemic()) {
                 throw e;
             }
             logger.warn("Failed reconciling ARK {}: {}", record.getArk(), e.getMessage());

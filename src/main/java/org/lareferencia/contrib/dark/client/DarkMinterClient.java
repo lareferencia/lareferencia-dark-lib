@@ -23,6 +23,8 @@ public class DarkMinterClient {
 
     private static final Logger logger = LogManager.getLogger(DarkMinterClient.class);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(90);
+    private static final String DARK_ERROR_CODE_HEADER = "X-DARK-Error-Code";
+    private static final String DARK_RETRYABLE_HEADER = "X-DARK-Retryable";
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -83,22 +85,42 @@ public class DarkMinterClient {
 
             if (response.statusCode() >= 400) {
                 String errorMessage = extractErrorMessage(body);
-                logger.warn("dARK minter rejected request [{} {}] with status {} and body {}",
-                        request.method(), request.uri(), response.statusCode(), body);
+                String errorCode = extractErrorCode(response);
+                boolean retryable = extractRetryable(response);
+                logger.warn("dARK minter rejected request [{} {}] with status {}, errorCode={}, retryable={} and body {}",
+                        request.method(), request.uri(), response.statusCode(), errorCode, retryable, body);
                 throw new DarkMinterClientException(
                         response.statusCode(),
                         request.method(),
                         request.uri(),
+                        errorCode,
+                        retryable,
                         errorMessage,
                         body);
             }
 
             return objectMapper.readValue(body, responseType);
         } catch (IOException e) {
-            throw new DarkMinterClientException(500, request.method(), request.uri(), "I/O error calling dARK minter", null, e);
+            throw new DarkMinterClientException(
+                    500,
+                    request.method(),
+                    request.uri(),
+                    "CLIENT_IO_ERROR",
+                    true,
+                    "I/O error calling dARK minter",
+                    null,
+                    e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new DarkMinterClientException(500, request.method(), request.uri(), "Interrupted while calling dARK minter", null, e);
+            throw new DarkMinterClientException(
+                    500,
+                    request.method(),
+                    request.uri(),
+                    "CLIENT_INTERRUPTED",
+                    true,
+                    "Interrupted while calling dARK minter",
+                    null,
+                    e);
         }
     }
 
@@ -138,5 +160,20 @@ public class DarkMinterClient {
         } catch (IOException e) {
             return body;
         }
+    }
+
+    private String extractErrorCode(HttpResponse<String> response) {
+        return response.headers()
+                .firstValue(DARK_ERROR_CODE_HEADER)
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .orElse(DarkMinterClientException.UNKNOWN_ERROR_CODE);
+    }
+
+    private boolean extractRetryable(HttpResponse<String> response) {
+        return response.headers()
+                .firstValue(DARK_RETRYABLE_HEADER)
+                .map(value -> value.equalsIgnoreCase("true"))
+                .orElse(response.statusCode() >= 500);
     }
 }

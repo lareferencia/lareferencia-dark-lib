@@ -383,9 +383,19 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 ARKResponse response = darkMinterClient.stageArk(ark, request);
                 persistSuccess(candidate, response);
             } catch (DarkMinterClientException e) {
+                if (e.isRetryable()) {
+                    logError("DARK stage stopping because dARK minter returned a retryable error while staging record "
+                            + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
+                    if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
+                        persistReservedFailure(candidate, e.getMessage());
+                    }
+                    pageHaltedBySystemicError = true;
+                    stop();
+                    return;
+                }
                 if (e.isSystemic()) {
-                    logError("DARK stage stopping because dARK minter failed while staging record "
-                            + candidate.getOaiId() + ": " + e.getMessage());
+                    logError("DARK stage stopping because dARK minter returned a non-retryable systemic error while staging record "
+                            + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
                     if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
                         persistReservedFailure(candidate, e.getMessage());
                     }

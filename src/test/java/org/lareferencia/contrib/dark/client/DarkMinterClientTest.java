@@ -11,10 +11,12 @@ import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -81,8 +83,69 @@ class DarkMinterClientTest {
         assertEquals(404, error.getStatusCode());
         assertEquals("GET", error.getMethod());
         assertEquals(URI.create("http://localhost:8001/api/v1/arks/ark:/12345/missing"), error.getUri());
+        assertEquals(DarkMinterClientException.UNKNOWN_ERROR_CODE, error.getErrorCode());
+        assertFalse(error.isRetryable());
         assertEquals("{\"detail\":\"ARK not found\"}", error.getResponseBody());
         assertEquals("dARK minter error 404 on GET http://localhost:8001/api/v1/arks/ark:/12345/missing: ARK not found", error.getMessage());
+    }
+
+    @Test
+    @DisplayName("HTTP errors preserve dARK error headers")
+    void preservesDarkErrorHeaders() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(
+                503,
+                "{\"detail\":\"Authorization check unavailable\"}",
+                Map.of(
+                        "X-DARK-Error-Code", List.of("AUTHORIZATION_CHECK_UNAVAILABLE"),
+                        "X-DARK-Retryable", List.of("true")));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+
+        DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
+                () -> client.getArk("ark:/12345/pending"));
+        assertEquals(503, error.getStatusCode());
+        assertEquals("AUTHORIZATION_CHECK_UNAVAILABLE", error.getErrorCode());
+        assertTrue(error.isRetryable());
+        assertTrue(error.isSystemic());
+        assertEquals("Authorization check unavailable", error.getMessage().substring(error.getMessage().lastIndexOf(": ") + 2));
+    }
+
+    @Test
+    @DisplayName("Retryable falls back to HTTP status when header is absent")
+    void retryableFallsBackToStatusWhenHeaderIsAbsent() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(500, "{\"detail\":\"Internal server error\"}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+
+        DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
+                () -> client.getArk("ark:/12345/pending"));
+        assertEquals(DarkMinterClientException.UNKNOWN_ERROR_CODE, error.getErrorCode());
+        assertTrue(error.isRetryable());
+    }
+
+    @Test
+    @DisplayName("Authorization failure can be non retryable")
+    void authorizationFailureCanBeNonRetryable() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(
+                403,
+                "{\"detail\":\"Authority not authorized for NAAN\"}",
+                Map.of(
+                        "X-DARK-Error-Code", List.of("AUTHORIZATION_FAILED"),
+                        "X-DARK-Retryable", List.of("false")));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+
+        DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
+                () -> client.getArk("ark:/12345/pending"));
+        assertEquals("AUTHORIZATION_FAILED", error.getErrorCode());
+        assertFalse(error.isRetryable());
+        assertTrue(error.isSystemic());
     }
 
     private DarkProperties properties() {
@@ -98,11 +161,16 @@ class DarkMinterClientTest {
 
     @SuppressWarnings("unchecked")
     private HttpResponse<String> mockResponse(int statusCode, String body) {
+        return mockResponse(statusCode, body, Map.of());
+    }
+
+    @SuppressWarnings("unchecked")
+    private HttpResponse<String> mockResponse(int statusCode, String body, Map<String, List<String>> headers) {
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(statusCode);
         when(response.body()).thenReturn(body);
         when(response.uri()).thenReturn(URI.create("http://localhost:8001/api/v1/arks"));
-        when(response.headers()).thenReturn(HttpHeaders.of(java.util.Map.of(), (a, b) -> true));
+        when(response.headers()).thenReturn(HttpHeaders.of(headers, (a, b) -> true));
         return response;
     }
 }
