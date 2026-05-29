@@ -63,7 +63,11 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
         currentArkNaan = darkNetworkSettingsResolver.resolveArkNaan(runningContext.getNetwork());
         resetRunCounters();
         runStartedAt = LocalDateTime.now();
-        reconcileStates = EnumSet.of(DarkTrackingState.DRAFT, DarkTrackingState.UPDATE, DarkTrackingState.ERROR);
+        reconcileStates = EnumSet.of(
+                DarkTrackingState.RESERVED,
+                DarkTrackingState.DRAFT,
+                DarkTrackingState.UPDATE,
+                DarkTrackingState.ERROR);
         runInitialPending = darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(
                 currentArkNaan,
                 reconcileStates);

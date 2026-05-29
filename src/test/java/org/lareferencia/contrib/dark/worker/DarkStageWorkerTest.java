@@ -40,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
@@ -121,11 +122,21 @@ class DarkStageWorkerTest {
         worker.postPage();
 
         ArgumentCaptor<DarkTrackingRecord> captor = ArgumentCaptor.forClass(DarkTrackingRecord.class);
-        verify(darkTrackingRepository).save(captor.capture());
-        DarkTrackingRecord saved = captor.getValue();
+        verify(darkTrackingRepository, times(2)).save(captor.capture());
+        DarkTrackingRecord reserved = captor.getAllValues().get(0);
+        assertEquals("12345", reserved.getArkNaan());
+        assertEquals("oai:test:1", reserved.getOaiId());
+        assertEquals("ark:/12345/abc", reserved.getArk());
+        assertEquals(DarkTrackingState.RESERVED, reserved.getState());
+        assertEquals(null, reserved.getSourceMetadataHash());
+        assertEquals(null, reserved.getTargetUrl());
+
+        DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("12345", saved.getArkNaan());
         assertEquals("oai:test:1", saved.getOaiId());
         assertEquals("ark:/12345/abc", saved.getArk());
+        assertEquals("hash-1", saved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/1", saved.getTargetUrl());
         assertEquals(DarkTrackingState.DRAFT, saved.getState());
     }
 
@@ -141,18 +152,16 @@ class DarkStageWorkerTest {
         trackingRecord.setTargetUrl("https://example.org/resource/2");
         trackingRecord.setState(DarkTrackingState.DRAFT);
 
-        when(metadataStore.getMetadata(any(), eq("hash-2"))).thenReturn("<metadata/>");
-        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:2"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
-                .thenReturn("<metadata/>");
-        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/2");
-        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:2"), any(), eq("https://example.org/resource/2")))
-                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:2"))).thenReturn(Optional.of(trackingRecord));
 
         worker.prePage();
         worker.processItem(record);
         worker.postPage();
 
+        verify(metadataStore, never()).getMetadata(any(), any());
+        verify(darkOriginalMetadataTransformerService, never()).transformForMinter(any(), any(), any(), any(), any());
+        verify(urlExtractionService, never()).extractBestUrl(any());
+        verify(level1MetadataService, never()).buildMinimalMetadata(any(), any(), any());
         verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
         verify(darkMinterClient, never()).stageArk(any(), any());
         verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
@@ -214,11 +223,129 @@ class DarkStageWorkerTest {
         worker.postPage();
 
         ArgumentCaptor<DarkTrackingRecord> captor = ArgumentCaptor.forClass(DarkTrackingRecord.class);
-        verify(darkTrackingRepository).save(captor.capture());
-        DarkTrackingRecord saved = captor.getValue();
+        verify(darkTrackingRepository, times(2)).save(captor.capture());
+        DarkTrackingRecord reserved = captor.getAllValues().get(0);
+        assertEquals("oai:test:4", reserved.getOaiId());
+        assertEquals("ark:/12345/retry", reserved.getArk());
+        assertEquals(DarkTrackingState.RESERVED, reserved.getState());
+        assertEquals(null, reserved.getSourceMetadataHash());
+        assertEquals(null, reserved.getTargetUrl());
+
+        DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("oai:test:4", saved.getOaiId());
         assertEquals("ark:/12345/retry", saved.getArk());
-        assertEquals(DarkTrackingState.ERROR, saved.getState());
+        assertEquals(DarkTrackingState.RESERVED, saved.getState());
+        assertEquals(null, saved.getSourceMetadataHash());
+        assertEquals(null, saved.getTargetUrl());
+        assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
+    }
+
+    @Test
+    @DisplayName("Keep confirmed hash when retryable update fails")
+    void keepsConfirmedHashWhenRetryableUpdateFails() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:5", null, "hash-5-new", false);
+        DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
+        trackingRecord.setOaiId("oai:test:5");
+        trackingRecord.setArkNaan("12345");
+        trackingRecord.setArk("ark:/12345/update");
+        trackingRecord.setSourceMetadataHash("hash-5-old");
+        trackingRecord.setTargetUrl("https://example.org/resource/5/old");
+        trackingRecord.setState(DarkTrackingState.PUBLISHED);
+
+        when(metadataStore.getMetadata(any(), eq("hash-5-new"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:5"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/5/new");
+        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:5"), any(), eq("https://example.org/resource/5/new")))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:5"))).thenReturn(Optional.of(trackingRecord));
+        when(darkMinterClient.stageArk(eq("ark:/12345/update"), any()))
+                .thenThrow(new DarkMinterClientException(500, "Internal server error"));
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        ArgumentCaptor<DarkTrackingRecord> captor = ArgumentCaptor.forClass(DarkTrackingRecord.class);
+        verify(darkTrackingRepository).save(captor.capture());
+        DarkTrackingRecord saved = captor.getValue();
+        assertEquals(DarkTrackingState.UPDATE, saved.getState());
+        assertEquals("hash-5-old", saved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/5/old", saved.getTargetUrl());
+        assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
+    }
+
+    @Test
+    @DisplayName("Update confirmed hash only after successful stage")
+    void updatesConfirmedHashOnlyAfterSuccessfulStage() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:6", null, "hash-6-new", false);
+        DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
+        trackingRecord.setOaiId("oai:test:6");
+        trackingRecord.setArkNaan("12345");
+        trackingRecord.setArk("ark:/12345/update-success");
+        trackingRecord.setSourceMetadataHash("hash-6-old");
+        trackingRecord.setTargetUrl("https://example.org/resource/6/old");
+        trackingRecord.setState(DarkTrackingState.PUBLISHED);
+
+        when(metadataStore.getMetadata(any(), eq("hash-6-new"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:6"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/6/new");
+        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:6"), any(), eq("https://example.org/resource/6/new")))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:6"))).thenReturn(Optional.of(trackingRecord));
+
+        ARKResponse stageResponse = new ARKResponse();
+        stageResponse.setArk("ark:/12345/update-success");
+        stageResponse.setState(DarkRemoteState.DRAFT);
+        when(darkMinterClient.stageArk(eq("ark:/12345/update-success"), any())).thenReturn(stageResponse);
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        ArgumentCaptor<DarkTrackingRecord> captor = ArgumentCaptor.forClass(DarkTrackingRecord.class);
+        verify(darkTrackingRepository).save(captor.capture());
+        DarkTrackingRecord saved = captor.getValue();
+        assertEquals(DarkTrackingState.DRAFT, saved.getState());
+        assertEquals("hash-6-new", saved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/6/new", saved.getTargetUrl());
+        assertEquals(null, saved.getLastError());
+    }
+
+    @Test
+    @DisplayName("Stage update state even when confirmed hash matches snapshot")
+    void stagesUpdateStateEvenWhenHashMatches() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:7", null, "hash-7", false);
+        DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
+        trackingRecord.setOaiId("oai:test:7");
+        trackingRecord.setArkNaan("12345");
+        trackingRecord.setArk("ark:/12345/update-state");
+        trackingRecord.setSourceMetadataHash("hash-7");
+        trackingRecord.setTargetUrl("https://example.org/resource/7");
+        trackingRecord.setState(DarkTrackingState.UPDATE);
+
+        when(metadataStore.getMetadata(any(), eq("hash-7"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(eq("oai:test:7"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/7");
+        when(level1MetadataService.buildMinimalMetadata(eq("oai:test:7"), any(), eq("https://example.org/resource/7")))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:7"))).thenReturn(Optional.of(trackingRecord));
+
+        ARKResponse stageResponse = new ARKResponse();
+        stageResponse.setArk("ark:/12345/update-state");
+        stageResponse.setState(DarkRemoteState.DRAFT);
+        when(darkMinterClient.stageArk(eq("ark:/12345/update-state"), any())).thenReturn(stageResponse);
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        verify(metadataStore).getMetadata(any(), eq("hash-7"));
+        verify(darkMinterClient).stageArk(eq("ark:/12345/update-state"), any());
+        verify(darkTrackingRepository).save(trackingRecord);
+        assertEquals(DarkTrackingState.DRAFT, trackingRecord.getState());
     }
 
     private SnapshotMetadata mockSnapshot() {

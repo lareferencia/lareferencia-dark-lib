@@ -63,8 +63,8 @@ public class DarkProperties {
     @Getter
     @Setter
     public static class Retry {
-        private int maxRetries = 3;
-        private List<Long> backoffSeconds = new ArrayList<>(List.of(5L, 30L, 60L));
+        private int maxRetries = 5;
+        private List<Long> backoffSeconds = new ArrayList<>(List.of(5L, 30L, 60L, 180L, 300L));
 
         public int getMaxRetries() {
             return Math.max(0, maxRetries);
@@ -72,7 +72,7 @@ public class DarkProperties {
 
         public List<Long> getBackoffSeconds() {
             if (backoffSeconds == null || backoffSeconds.isEmpty()) {
-                return List.of(5L, 30L, 60L);
+                return List.of(5L, 30L, 60L, 180L, 300L);
             }
             return backoffSeconds;
         }

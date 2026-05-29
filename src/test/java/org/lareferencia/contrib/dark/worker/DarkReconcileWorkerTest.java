@@ -12,13 +12,20 @@ import org.lareferencia.contrib.dark.domain.DarkTrackingState;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
 import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.lareferencia.core.domain.Network;
+import org.lareferencia.core.worker.NetworkRunningContext;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Collection;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,6 +52,23 @@ class DarkReconcileWorkerTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(worker, "currentArkNaan", "12345");
+    }
+
+    @Test
+    @DisplayName("Include reserved records in reconciliation states")
+    void includesReservedRecordsInReconciliationStates() {
+        DarkProperties properties = new DarkProperties();
+        Network network = new Network();
+        network.setAcronym("TEST");
+        ReflectionTestUtils.setField(worker, "darkProperties", properties);
+        ReflectionTestUtils.setField(worker, "runningContext", new NetworkRunningContext(network));
+        when(darkNetworkSettingsResolver.resolveArkNaan(network)).thenReturn("12345");
+
+        worker.preRun();
+
+        ArgumentCaptor<Collection<DarkTrackingState>> statesCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(darkTrackingRepository).countByIdArkNaanAndArkIsNotNullAndStateIn(eq("12345"), statesCaptor.capture());
+        assertTrue(statesCaptor.getValue().contains(DarkTrackingState.RESERVED));
     }
 
     @Test
@@ -103,5 +127,28 @@ class DarkReconcileWorkerTest {
 
         assertEquals(DarkTrackingState.DRAFT, record.getState());
         verify(darkTrackingRepository, never()).save(record);
+    }
+
+    @Test
+    @DisplayName("Reconcile reserved record without confirming payload hash")
+    void reconcilesReservedRecordWithoutConfirmingPayloadHash() {
+        DarkTrackingRecord record = new DarkTrackingRecord();
+        record.setOaiId("oai:test:4");
+        record.setArkNaan("12345");
+        record.setArk("ark:/12345/reserved");
+        record.setState(DarkTrackingState.RESERVED);
+
+        ARKResponse response = new ARKResponse();
+        response.setArk("ark:/12345/reserved");
+        response.setState(DarkRemoteState.DRAFT);
+
+        when(darkMinterClient.getArk("ark:/12345/reserved")).thenReturn(response);
+
+        worker.processItem(record);
+
+        assertEquals(DarkTrackingState.DRAFT, record.getState());
+        assertEquals(null, record.getSourceMetadataHash());
+        assertEquals(null, record.getTargetUrl());
+        verify(darkTrackingRepository).save(record);
     }
 }

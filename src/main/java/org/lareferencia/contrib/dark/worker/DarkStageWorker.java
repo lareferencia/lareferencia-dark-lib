@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
@@ -168,45 +169,26 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     public void processItem(OAIRecord record) {
         pageProcessed++;
         runProcessed++;
-        DarkStageCandidate candidate;
-        try {
-            String originalMetadata = metadataStore.getMetadata(snapshotMetadata, record.getOriginalMetadataHash());
-            OAIRecordMetadata metadata = new OAIRecordMetadata(record.getIdentifier(), originalMetadata);
-            String metadataForMinter = darkOriginalMetadataTransformerService.transformForMinter(
-                    record.getIdentifier(),
-                    record.getDatestamp(),
-                    originalMetadata,
-                    currentSourceMetadataSchema,
-                    currentTargetMetadataSchema);
-            String targetUrl = urlExtractionService.extractBestUrl(metadata);
-            if (targetUrl == null || targetUrl.isBlank()) {
-                logWarn("DARK stage skipping record " + record.getIdentifier() + " because no target URL could be extracted");
-                persistError(record.getIdentifier(), null, record.getOriginalMetadataHash(), null, "No target URL could be extracted");
-                return;
-            }
 
-            Map<String, Object> minimalMetadata = level1MetadataService.buildMinimalMetadata(
-                    record.getIdentifier(),
-                    metadata,
-                    targetUrl);
-
-            Optional<DarkTrackingRecord> existing = darkTrackingRepository.findById(trackingId(record.getIdentifier()));
-            candidate = DarkStageCandidate.builder()
-                    .oaiId(record.getIdentifier())
-                    .sourceMetadataHash(record.getOriginalMetadataHash())
-                    .targetUrl(targetUrl)
-                    .originalMetadata(metadataForMinter)
-                    .minimalMetadata(minimalMetadata)
-                    .existingRecord(existing.orElse(null))
-                    .ark(existing.map(DarkTrackingRecord::getArk).orElse(null))
-                    .build();
-        } catch (Exception e) {
-            logWarn("DARK stage failed preparing record " + record.getIdentifier() + ": " + e.getMessage());
-            persistError(record.getIdentifier(), null, record.getOriginalMetadataHash(), null, e.getMessage());
+        Optional<DarkTrackingRecord> existing = darkTrackingRepository.findById(trackingId(record.getIdentifier()));
+        DarkTrackingRecord existingRecord = existing.orElse(null);
+        if (canSkipWithoutPreparingMetadata(record, existingRecord)) {
+            pageSkippedUnchanged++;
+            runSkippedUnchanged++;
+            logger.debug("DARK stage skipping record {} because confirmed tracking hash is up to date for ARK {}",
+                    record.getIdentifier(), existingRecord.getArk());
             return;
         }
 
-        DarkTrackingRecord existingRecord = candidate.getExistingRecord();
+        DarkStageCandidate candidate;
+        try {
+            candidate = prepareStageCandidate(record, existingRecord);
+        } catch (Exception e) {
+            logWarn("DARK stage failed preparing record " + record.getIdentifier() + ": " + e.getMessage());
+            persistError(record.getIdentifier(), null, e.getMessage());
+            return;
+        }
+
         if (existingRecord == null || !existingRecord.hasArk()) {
             recordsToReserve.add(candidate);
             pageQueuedForReserve++;
@@ -215,7 +197,9 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             return;
         }
 
-        if (existingRecord.getState() == DarkTrackingState.RESERVED || existingRecord.getState() == DarkTrackingState.ERROR) {
+        if (existingRecord.getState() == DarkTrackingState.RESERVED
+                || existingRecord.getState() == DarkTrackingState.UPDATE
+                || existingRecord.getState() == DarkTrackingState.ERROR) {
             recordsToStage.add(candidate);
             pageQueuedForStage++;
             runQueuedForStage++;
@@ -224,7 +208,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             return;
         }
 
-        if (!existingRecord.samePayload(candidate.getSourceMetadataHash(), candidate.getTargetUrl())) {
+        if (!Objects.equals(existingRecord.getSourceMetadataHash(), candidate.getSourceMetadataHash())) {
             recordsToStage.add(candidate);
             pageQueuedForStage++;
             runQueuedForStage++;
@@ -235,6 +219,51 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         pageSkippedUnchanged++;
         runSkippedUnchanged++;
         logger.debug("DARK stage skipping record {} because tracking is up to date for ARK {}", candidate.getOaiId(), existingRecord.getArk());
+    }
+
+    private boolean canSkipWithoutPreparingMetadata(OAIRecord record, DarkTrackingRecord existingRecord) {
+        if (existingRecord == null || !existingRecord.hasArk() || requiresStage(existingRecord.getState())) {
+            return false;
+        }
+        String currentHash = record.getOriginalMetadataHash();
+        return currentHash != null && Objects.equals(existingRecord.getSourceMetadataHash(), currentHash);
+    }
+
+    private boolean requiresStage(DarkTrackingState state) {
+        return state == null
+                || state == DarkTrackingState.RESERVED
+                || state == DarkTrackingState.UPDATE
+                || state == DarkTrackingState.ERROR;
+    }
+
+    private DarkStageCandidate prepareStageCandidate(OAIRecord record, DarkTrackingRecord existingRecord) throws Exception {
+        String originalMetadata = metadataStore.getMetadata(snapshotMetadata, record.getOriginalMetadataHash());
+        OAIRecordMetadata metadata = new OAIRecordMetadata(record.getIdentifier(), originalMetadata);
+        String metadataForMinter = darkOriginalMetadataTransformerService.transformForMinter(
+                record.getIdentifier(),
+                record.getDatestamp(),
+                originalMetadata,
+                currentSourceMetadataSchema,
+                currentTargetMetadataSchema);
+        String targetUrl = urlExtractionService.extractBestUrl(metadata);
+        if (targetUrl == null || targetUrl.isBlank()) {
+            throw new IllegalStateException("No target URL could be extracted");
+        }
+
+        Map<String, Object> minimalMetadata = level1MetadataService.buildMinimalMetadata(
+                record.getIdentifier(),
+                metadata,
+                targetUrl);
+
+        return DarkStageCandidate.builder()
+                .oaiId(record.getIdentifier())
+                .sourceMetadataHash(record.getOriginalMetadataHash())
+                .targetUrl(targetUrl)
+                .originalMetadata(metadataForMinter)
+                .minimalMetadata(minimalMetadata)
+                .existingRecord(existingRecord)
+                .ark(existingRecord != null ? existingRecord.getArk() : null)
+                .build();
     }
 
     @Override
@@ -321,7 +350,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
             for (ReserveBatchResponse.BatchError error : response.getErrors()) {
                 logWarn("DARK stage reservation error for record " + error.getClientItemId() + ": " + error.getError());
-                persistError(error.getClientItemId(), null, null, null, error.getError());
+                persistError(error.getClientItemId(), null, error.getError());
             }
 
             List<DarkStageCandidate> reservedCandidates = new ArrayList<>();
@@ -329,12 +358,13 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 ARKResponse result = resultsByItemId.get(candidate.getOaiId());
                 if (result == null) {
                     logWarn("DARK stage reservation returned no ARK for record " + candidate.getOaiId());
-                    persistError(candidate.getOaiId(), null, candidate.getSourceMetadataHash(), candidate.getTargetUrl(),
-                            "ARK reservation did not return a result for the record");
+                    persistError(candidate.getOaiId(), null, "ARK reservation did not return a result for the record");
                     continue;
                 }
+                DarkStageCandidate reservedCandidate = candidate.withArk(result.getArk());
+                persistReserved(reservedCandidate);
                 logger.debug("DARK stage reserved ARK {} for record {}", result.getArk(), candidate.getOaiId());
-                reservedCandidates.add(candidate.withArk(result.getArk()));
+                reservedCandidates.add(reservedCandidate);
             }
 
             stagePendingRecords(reservedCandidates);
@@ -408,9 +438,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 if (e.isRetryable()) {
                     logError("DARK stage stopping because dARK minter returned a retryable error while staging record "
                             + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
-                    if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
-                        persistReservedFailure(candidate, e.getMessage());
-                    }
+                    persistRetryableStageFailure(candidate, e.getMessage());
                     pageHaltedBySystemicError = true;
                     stop();
                     return;
@@ -430,11 +458,22 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                     persistReservedFailure(candidate, e.getMessage());
                 } else {
                     logWarn("DARK stage failed updating ARK " + ark + " for record " + candidate.getOaiId() + ": " + e.getMessage());
-                    persistError(candidate.getOaiId(), ark, candidate.getSourceMetadataHash(), candidate.getTargetUrl(), e.getMessage());
+                    persistError(candidate.getOaiId(), ark, e.getMessage());
                 }
             }
         }
         candidates.clear();
+    }
+
+    private void persistReserved(DarkStageCandidate candidate) {
+        DarkTrackingRecord record = darkTrackingRepository.findById(trackingId(candidate.getOaiId()))
+                .orElseGet(DarkTrackingRecord::new);
+        record.setArkNaan(currentArkNaan);
+        record.setOaiId(candidate.getOaiId());
+        record.setArk(candidate.getArk());
+        record.setState(DarkTrackingState.RESERVED);
+        record.setLastError(null);
+        darkTrackingRepository.save(record);
     }
 
     private void persistSuccess(DarkStageCandidate candidate, ARKResponse response) {
@@ -466,8 +505,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArkNaan(currentArkNaan);
         record.setOaiId(candidate.getOaiId());
         record.setArk(candidate.getArk());
-        record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setTargetUrl(candidate.getTargetUrl());
         record.setState(DarkTrackingState.ERROR);
         record.setLastError(error);
         darkTrackingRepository.save(record);
@@ -475,18 +512,36 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         runReserveFailures++;
     }
 
-    private void persistError(String oaiId, String ark, String sourceMetadataHash, String targetUrl, String error) {
+    private void persistRetryableStageFailure(DarkStageCandidate candidate, String error) {
+        DarkTrackingRecord record = darkTrackingRepository.findById(trackingId(candidate.getOaiId()))
+                .orElseGet(DarkTrackingRecord::new);
+        record.setArkNaan(currentArkNaan);
+        record.setOaiId(candidate.getOaiId());
+        record.setArk(candidate.getArk());
+        record.setState(retryableFailureState(candidate));
+        record.setLastError(error);
+        darkTrackingRepository.save(record);
+        pageStageFailures++;
+        runStageFailures++;
+    }
+
+    private DarkTrackingState retryableFailureState(DarkStageCandidate candidate) {
+        DarkTrackingRecord existingRecord = candidate.getExistingRecord();
+        if (existingRecord == null || !existingRecord.hasArk() || existingRecord.getState() == DarkTrackingState.RESERVED) {
+            return DarkTrackingState.RESERVED;
+        }
+        if (existingRecord.getState() == DarkTrackingState.ERROR) {
+            return DarkTrackingState.ERROR;
+        }
+        return DarkTrackingState.UPDATE;
+    }
+
+    private void persistError(String oaiId, String ark, String error) {
         DarkTrackingRecord record = darkTrackingRepository.findById(trackingId(oaiId))
                 .orElseGet(DarkTrackingRecord::new);
         record.setArkNaan(currentArkNaan);
         record.setOaiId(oaiId);
         record.setArk(ark != null ? ark : record.getArk());
-        if (sourceMetadataHash != null) {
-            record.setSourceMetadataHash(sourceMetadataHash);
-        }
-        if (targetUrl != null) {
-            record.setTargetUrl(targetUrl);
-        }
         record.setState(DarkTrackingState.ERROR);
         record.setLastError(error);
         darkTrackingRepository.save(record);
