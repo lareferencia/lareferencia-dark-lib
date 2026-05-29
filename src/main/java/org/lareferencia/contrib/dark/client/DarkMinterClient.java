@@ -76,6 +76,37 @@ public class DarkMinterClient {
 
     private <T> T sendJsonRequest(HttpRequest.Builder builder, Class<T> responseType) {
         HttpRequest request = builder.timeout(REQUEST_TIMEOUT).build();
+        int maxRetries = properties.getMinter().getRetry().getMaxRetries();
+        DarkMinterClientException lastException = null;
+
+        for (int retry = 0; retry <= maxRetries; retry++) {
+            try {
+                return sendJsonRequestOnce(request, responseType);
+            } catch (DarkMinterClientException e) {
+                lastException = e;
+                if (!shouldRetry(e, retry, maxRetries)) {
+                    throw e;
+                }
+
+                Duration delay = retryDelay(retry);
+                logger.warn(
+                        "dARK minter retryable error on [{} {}] | status={} | errorCode={} | retry={}/{} | retryInSeconds={} | message={}",
+                        request.method(),
+                        request.uri(),
+                        e.getStatusCode(),
+                        e.getErrorCode(),
+                        retry + 1,
+                        maxRetries,
+                        delay.toSeconds(),
+                        e.getMessage());
+                sleepBeforeRetry(delay, request);
+            }
+        }
+
+        throw lastException;
+    }
+
+    private <T> T sendJsonRequestOnce(HttpRequest request, Class<T> responseType) {
         logger.debug("Calling dARK minter [{} {}]", request.method(), request.uri());
 
         try {
@@ -147,6 +178,39 @@ public class DarkMinterClient {
             return objectMapper.writeValueAsString(payload);
         } catch (IOException e) {
             throw new DarkMinterClientException(500, "Unable to serialize dARK request", e);
+        }
+    }
+
+    private boolean shouldRetry(DarkMinterClientException e, int retry, int maxRetries) {
+        return e.isRetryable()
+                && retry < maxRetries
+                && !Thread.currentThread().isInterrupted();
+    }
+
+    private Duration retryDelay(int retry) {
+        List<Long> backoffSeconds = properties.getMinter().getRetry().getBackoffSeconds();
+        int delayIndex = Math.min(retry, backoffSeconds.size() - 1);
+        return Duration.ofSeconds(Math.max(0L, backoffSeconds.get(delayIndex)));
+    }
+
+    private void sleepBeforeRetry(Duration delay, HttpRequest request) {
+        if (delay.isZero() || delay.isNegative()) {
+            return;
+        }
+
+        try {
+            Thread.sleep(delay.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DarkMinterClientException(
+                    500,
+                    request.method(),
+                    request.uri(),
+                    "CLIENT_INTERRUPTED",
+                    true,
+                    "Interrupted while waiting to retry dARK minter request",
+                    null,
+                    e);
         }
     }
 

@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @DisplayName("DarkMinterClient tests")
@@ -128,6 +130,29 @@ class DarkMinterClientTest {
     }
 
     @Test
+    @DisplayName("Retryable errors are retried before returning success")
+    void retryableErrorsAreRetriedBeforeSuccess() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> retryableResponse = mockResponse(
+                503,
+                "{\"detail\":\"Authorization check unavailable\"}",
+                Map.of(
+                        "X-DARK-Error-Code", List.of("AUTHORIZATION_CHECK_UNAVAILABLE"),
+                        "X-DARK-Retryable", List.of("true")));
+        HttpResponse<String> successResponse = mockResponse(200, """
+                {"ark":"ark:/12345/abc","state":"P","target":"https://example.org/resource"}
+                """);
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(retryableResponse, retryableResponse, successResponse);
+
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        ARKResponse ark = client.getArk("ark:/12345/abc");
+
+        assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
+        verify(httpClient, times(3)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
+    @Test
     @DisplayName("Authorization failure can be non retryable")
     void authorizationFailureCanBeNonRetryable() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);
@@ -153,6 +178,7 @@ class DarkMinterClientTest {
         properties.setAuthorityId(" authority-1\t");
         properties.setAuthHeaderName(" X-Authority-Id ");
         properties.getMinter().setBaseUrl(" http://localhost:8001 ");
+        properties.getMinter().getRetry().setBackoffSeconds(List.of(0L, 0L, 0L));
         assertEquals("authority-1", properties.getAuthorityId());
         assertEquals("X-Authority-Id", properties.getAuthHeaderName());
         assertEquals("http://localhost:8001", properties.getMinter().getBaseUrl());

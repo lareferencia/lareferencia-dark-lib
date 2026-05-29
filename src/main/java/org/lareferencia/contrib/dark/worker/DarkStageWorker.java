@@ -300,10 +300,16 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 break;
             }
             logInfo("DARK stage reserving " + chunk.size() + " ARKs for network " + runningContext.getNetwork().getAcronym());
-            ReserveBatchResponse response = darkMinterClient.reserveBatch(
-                    darkProperties.getAuthorityId(),
-                    currentArkNaan,
-                    chunk.stream().map(DarkStageCandidate::getOaiId).toList());
+            ReserveBatchResponse response;
+            try {
+                response = darkMinterClient.reserveBatch(
+                        darkProperties.getAuthorityId(),
+                        currentArkNaan,
+                        chunk.stream().map(DarkStageCandidate::getOaiId).toList());
+            } catch (DarkMinterClientException e) {
+                handleReservationMinterFailure(e);
+                break;
+            }
             failOnSystemicReservationFailure(response, chunk.size());
 
             Map<String, ARKResponse> resultsByItemId = new HashMap<>();
@@ -339,6 +345,20 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         recordsToReserve.clear();
     }
 
+    private void handleReservationMinterFailure(DarkMinterClientException e) {
+        if (e.isRetryable()) {
+            logError("DARK stage stopping because dARK minter returned a retryable error while reserving ARKs"
+                    + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
+            pageHaltedBySystemicError = true;
+            stop();
+            return;
+        }
+
+        logError("DARK stage stopping because dARK minter returned a non-retryable error while reserving ARKs"
+                + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
+        throw e;
+    }
+
     private void failOnSystemicReservationFailure(ReserveBatchResponse response, int requestedCount) {
         if (response.getErrors() == null || response.getErrors().isEmpty()) {
             return;
@@ -357,6 +377,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         if (systemicError.isPresent()) {
             throw new DarkMinterClientException(
                     500,
+                    "BATCH_RESERVATION_FAILED",
+                    true,
                     "dARK minter reservation batch failed before allocating ARKs: " + systemicError.get());
         }
     }

@@ -5,6 +5,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Getter
 @Setter
 @Component
@@ -39,6 +42,7 @@ public class DarkProperties {
     @Setter
     public static class Minter {
         private String baseUrl = "http://localhost:8001";
+        private Retry retry = new Retry();
 
         public String getBaseUrl() {
             return normalize(baseUrl);
@@ -46,6 +50,31 @@ public class DarkProperties {
 
         public void setBaseUrl(String baseUrl) {
             this.baseUrl = normalize(baseUrl);
+        }
+
+        public Retry getRetry() {
+            if (retry == null) {
+                retry = new Retry();
+            }
+            return retry;
+        }
+    }
+
+    @Getter
+    @Setter
+    public static class Retry {
+        private int maxRetries = 3;
+        private List<Long> backoffSeconds = new ArrayList<>(List.of(5L, 30L, 60L));
+
+        public int getMaxRetries() {
+            return Math.max(0, maxRetries);
+        }
+
+        public List<Long> getBackoffSeconds() {
+            if (backoffSeconds == null || backoffSeconds.isEmpty()) {
+                return List.of(5L, 30L, 60L);
+            }
+            return backoffSeconds;
         }
     }
 
