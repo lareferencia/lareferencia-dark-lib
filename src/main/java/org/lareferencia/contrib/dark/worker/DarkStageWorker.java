@@ -149,15 +149,15 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 ? DarkStageWorker.class.getProtectionDomain().getCodeSource().getLocation().toString()
                 : "unknown";
         logInfo(String.format(
-                "DARK stage run configured for network %s using snapshot %s | arkNaan=%s | minterBaseUrl=%s | stagePageSize=%s | maxPagesPerRun=%s | reserveBatchSize=%s",
+                "DARK stage start | network=%s | snapshot=%s | naan=%s | minter=%s | pageSize=%s | maxPages=%s | batchSize=%s",
                 runningContext.getNetwork().getAcronym(),
                 snapshotId,
                 currentArkNaan,
                 darkProperties.getMinter().getBaseUrl(),
                 darkProperties.getStagePageSize(),
-                darkProperties.getStageMaxPagesPerRun(),
+                darkProperties.getStageMaxPagesPerRun() == 0 ? "all" : darkProperties.getStageMaxPagesPerRun(),
                 darkProperties.getReserveBatchSize())
-                + String.format(" | sourceMetadataSchema=%s | targetMetadataSchema=%s | schemaTransform=%s | level1Mapping=%s | implementationVersion=%s | codeSource=%s",
+                + String.format(" | schema=%s->%s | transform=%s | mapping=%s | build=%s | source=%s",
                 currentSourceMetadataSchema,
                 currentTargetMetadataSchema,
                 !currentSourceMetadataSchema.equals(currentTargetMetadataSchema),
@@ -300,14 +300,15 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             }
         }
         logInfo(String.format(
-                "DARK stage page summary for network %s | processed=%s | queuedForReserve=%s | queuedForStage=%s | unchanged=%s | errors=%s | stageSuccesses=%s | reserveFailures=%s | stageFailures=%s",
+                "DARK stage page | network=%s | page=%s | processed=%s | reserve=%s | stage=%s | unchanged=%s | succeeded=%s | errors=%s | reserveFailed=%s | stageFailed=%s",
                 runningContext.getNetwork().getAcronym(),
+                getActualPage(),
                 pageProcessed,
                 pageQueuedForReserve,
                 pageQueuedForStage,
                 pageSkippedUnchanged,
-                pageErrors,
                 pageStageSuccesses,
+                pageErrors,
                 pageReserveFailures,
                 pageStageFailures));
         if (systemicPreparationFailure) {
@@ -322,14 +323,14 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             postPage();
         }
         logInfo(String.format(
-                "DARK stage run summary for network %s | processed=%s | queuedForReserve=%s | queuedForStage=%s | unchanged=%s | errors=%s | stageSuccesses=%s | reserveFailures=%s | stageFailures=%s",
+                "DARK stage done | network=%s | processed=%s | reserve=%s | stage=%s | unchanged=%s | succeeded=%s | errors=%s | reserveFailed=%s | stageFailed=%s",
                 runningContext.getNetwork().getAcronym(),
                 runProcessed,
                 runQueuedForReserve,
                 runQueuedForStage,
                 runSkippedUnchanged,
-                runErrors,
                 runStageSuccesses,
+                runErrors,
                 runReserveFailures,
                 runStageFailures));
         if (snapshotMetadata != null) {
@@ -359,7 +360,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             if (pageHaltedBySystemicError) {
                 break;
             }
-            logInfo("DARK stage reserving " + chunk.size() + " ARKs for network " + runningContext.getNetwork().getAcronym());
+            logger.debug("DARK stage reserving {} ARKs for network {}",
+                    chunk.size(), runningContext.getNetwork().getAcronym());
             ReserveBatchResponse response;
             try {
                 response = darkMinterClient.reserveBatch(
@@ -465,7 +467,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             return;
         }
 
-        logInfo("DARK stage staging " + candidates.size() + " records for network " + runningContext.getNetwork().getAcronym());
+        logger.debug("DARK stage staging {} records for network {}",
+                candidates.size(), runningContext.getNetwork().getAcronym());
         for (DarkStageCandidate candidate : candidates) {
             String ark = candidate.getArk();
             try {
