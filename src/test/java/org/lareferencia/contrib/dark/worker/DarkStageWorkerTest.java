@@ -35,7 +35,9 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -128,8 +130,8 @@ class DarkStageWorkerTest {
         assertEquals("oai:test:1", reserved.getOaiId());
         assertEquals("ark:/12345/abc", reserved.getArk());
         assertEquals(DarkTrackingState.RESERVED, reserved.getState());
-        assertEquals(null, reserved.getSourceMetadataHash());
-        assertEquals(null, reserved.getTargetUrl());
+        assertEquals("hash-1", reserved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/1", reserved.getTargetUrl());
 
         DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("12345", saved.getArkNaan());
@@ -144,11 +146,26 @@ class DarkStageWorkerTest {
     @DisplayName("Skip remote calls when tracking payload is unchanged")
     void skipsUnchangedTrackedRecord() throws Exception {
         OAIRecord record = OAIRecord.create("oai:test:2", null, "hash-2", false);
+        Map<String, Object> minimalMetadata = Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026);
+        when(metadataStore.getMetadata(any(), eq("hash-2"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(
+                eq("oai:test:2"), isNull(), eq("<metadata/>"), eq("xoai"), eq("dublin_core")))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/resource/2");
+        when(level1MetadataService.buildMinimalMetadata(
+                eq("oai:test:2"), any(), eq("https://example.org/resource/2")))
+                .thenReturn(minimalMetadata);
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:2");
         trackingRecord.setArkNaan("12345");
         trackingRecord.setArk("ark:/12345/existing");
         trackingRecord.setSourceMetadataHash("hash-2");
+        trackingRecord.setStagePayloadHash(ReflectionTestUtils.invokeMethod(
+                worker,
+                "calculateStagePayloadHash",
+                "<metadata/>",
+                minimalMetadata,
+                "https://example.org/resource/2"));
         trackingRecord.setTargetUrl("https://example.org/resource/2");
         trackingRecord.setState(DarkTrackingState.DRAFT);
 
@@ -158,10 +175,10 @@ class DarkStageWorkerTest {
         worker.processItem(record);
         worker.postPage();
 
-        verify(metadataStore, never()).getMetadata(any(), any());
-        verify(darkOriginalMetadataTransformerService, never()).transformForMinter(any(), any(), any(), any(), any());
-        verify(urlExtractionService, never()).extractBestUrl(any());
-        verify(level1MetadataService, never()).buildMinimalMetadata(any(), any(), any());
+        verify(metadataStore).getMetadata(any(), eq("hash-2"));
+        verify(darkOriginalMetadataTransformerService).transformForMinter(any(), any(), any(), any(), any());
+        verify(urlExtractionService).extractBestUrl(any());
+        verify(level1MetadataService).buildMinimalMetadata(any(), any(), any());
         verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
         verify(darkMinterClient, never()).stageArk(any(), any());
         verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
@@ -228,15 +245,15 @@ class DarkStageWorkerTest {
         assertEquals("oai:test:4", reserved.getOaiId());
         assertEquals("ark:/12345/retry", reserved.getArk());
         assertEquals(DarkTrackingState.RESERVED, reserved.getState());
-        assertEquals(null, reserved.getSourceMetadataHash());
-        assertEquals(null, reserved.getTargetUrl());
+        assertEquals("hash-4", reserved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/4", reserved.getTargetUrl());
 
         DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("oai:test:4", saved.getOaiId());
         assertEquals("ark:/12345/retry", saved.getArk());
         assertEquals(DarkTrackingState.RESERVED, saved.getState());
-        assertEquals(null, saved.getSourceMetadataHash());
-        assertEquals(null, saved.getTargetUrl());
+        assertEquals("hash-4", saved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/4", saved.getTargetUrl());
         assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
     }
 
@@ -270,8 +287,8 @@ class DarkStageWorkerTest {
         verify(darkTrackingRepository).save(captor.capture());
         DarkTrackingRecord saved = captor.getValue();
         assertEquals(DarkTrackingState.UPDATE, saved.getState());
-        assertEquals("hash-5-old", saved.getSourceMetadataHash());
-        assertEquals("https://example.org/resource/5/old", saved.getTargetUrl());
+        assertEquals("hash-5-new", saved.getSourceMetadataHash());
+        assertEquals("https://example.org/resource/5/new", saved.getTargetUrl());
         assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
     }
 
@@ -346,6 +363,95 @@ class DarkStageWorkerTest {
         verify(darkMinterClient).stageArk(eq("ark:/12345/update-state"), any());
         verify(darkTrackingRepository).save(trackingRecord);
         assertEquals(DarkTrackingState.DRAFT, trackingRecord.getState());
+    }
+
+    @Test
+    @DisplayName("Persist and retry preparation errors on subsequent pages")
+    void retriesPreparationErrors() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:no-author", null, "hash-no-author", false);
+        when(metadataStore.getMetadata(any(), eq("hash-no-author"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(any(), any(), any(), any(), any()))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/no-author");
+        when(level1MetadataService.buildMinimalMetadata(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Missing dc.creator and dc.contributor.author"));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:no-author")))
+                .thenReturn(Optional.empty());
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        verify(level1MetadataService, times(2)).buildMinimalMetadata(any(), any(), any());
+        verify(darkTrackingRepository, times(2)).save(any(DarkTrackingRecord.class));
+        verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Count a batch reservation error only once")
+    void countsBatchReservationErrorOnce() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:batch-error", null, "hash-batch", false);
+        when(metadataStore.getMetadata(any(), eq("hash-batch"))).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(any(), any(), any(), any(), any()))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/batch-error");
+        when(level1MetadataService.buildMinimalMetadata(any(), any(), any()))
+                .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:batch-error")))
+                .thenReturn(Optional.empty());
+
+        ReserveBatchResponse response = new ReserveBatchResponse();
+        ReserveBatchResponse.BatchError error = new ReserveBatchResponse.BatchError();
+        error.setClientItemId("oai:test:batch-error");
+        error.setError("Record validation failed");
+        response.setErrors(List.of(error));
+        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:batch-error")))
+                .thenReturn(response);
+
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+
+        verify(darkTrackingRepository, times(1)).save(any(DarkTrackingRecord.class));
+        verify(darkMinterClient, never()).stageArk(any(), any());
+    }
+
+    @Test
+    @DisplayName("Stage payload hash changes when derived target changes")
+    void payloadHashIncludesDerivedTarget() {
+        Map<String, Object> metadata = Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026);
+        String first = ReflectionTestUtils.invokeMethod(
+                worker, "calculateStagePayloadHash", "<metadata/>", metadata, "https://example.org/one");
+        String second = ReflectionTestUtils.invokeMethod(
+                worker, "calculateStagePayloadHash", "<metadata/>", metadata, "https://example.org/two");
+
+        assertNotEquals(first, second);
+    }
+
+    @Test
+    @DisplayName("Halt a page when the same preparation error reaches ninety percent")
+    void haltsOnSystemicPreparationFailure() throws Exception {
+        when(metadataStore.getMetadata(any(), any())).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(any(), any(), any(), any(), any()))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/systemic");
+        when(level1MetadataService.buildMinimalMetadata(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Missing dc.creator and dc.contributor.author"));
+        when(darkTrackingRepository.findById(any(DarkTrackingRecordId.class))).thenReturn(Optional.empty());
+
+        worker.prePage();
+        for (int index = 0; index < 20; index++) {
+            worker.processItem(OAIRecord.create("oai:test:systemic:" + index, null, "hash-" + index, false));
+        }
+        worker.postPage();
+
+        assertTrue((Boolean) ReflectionTestUtils.getField(worker, "pageHaltedBySystemicError"));
+        verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkTrackingRepository, times(20)).save(any(DarkTrackingRecord.class));
     }
 
     private SnapshotMetadata mockSnapshot() {

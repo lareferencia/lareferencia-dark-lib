@@ -173,6 +173,40 @@ class DarkMinterClientTest {
         assertTrue(error.isSystemic());
     }
 
+    @Test
+    @DisplayName("Reject redirects instead of parsing them as successful JSON")
+    void rejectsRedirectResponse() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(302, "{\"detail\":\"Moved\"}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+        DarkProperties properties = properties();
+        properties.getMinter().getRetry().setMaxRetries(0);
+
+        DarkMinterClientException error = assertThrows(
+                DarkMinterClientException.class,
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:/12345/moved"));
+
+        assertEquals(302, error.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("Reject empty successful responses")
+    void rejectsEmptySuccessResponse() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(200, "");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+        DarkProperties properties = properties();
+        properties.getMinter().getRetry().setMaxRetries(0);
+
+        DarkMinterClientException error = assertThrows(
+                DarkMinterClientException.class,
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:/12345/empty"));
+
+        assertEquals("EMPTY_RESPONSE", error.getErrorCode());
+    }
+
     private DarkProperties properties() {
         DarkProperties properties = new DarkProperties();
         properties.setAuthorityId(" authority-1\t");

@@ -11,6 +11,7 @@ import java.util.Map;
 class DarkStageCandidate {
     String oaiId;
     String sourceMetadataHash;
+    String stagePayloadHash;
     String targetUrl;
     String originalMetadata;
     Map<String, Object> minimalMetadata;
@@ -21,6 +22,7 @@ class DarkStageCandidate {
         return DarkStageCandidate.builder()
                 .oaiId(oaiId)
                 .sourceMetadataHash(sourceMetadataHash)
+                .stagePayloadHash(stagePayloadHash)
                 .targetUrl(targetUrl)
                 .originalMetadata(originalMetadata)
                 .minimalMetadata(minimalMetadata)

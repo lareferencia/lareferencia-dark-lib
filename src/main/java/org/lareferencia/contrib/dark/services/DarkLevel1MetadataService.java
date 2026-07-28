@@ -4,6 +4,8 @@ import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,17 +19,26 @@ import java.util.regex.Pattern;
 @Service
 public class DarkLevel1MetadataService {
 
-    private static final Pattern YEAR_PATTERN = Pattern.compile("(19|20)\\d{2}");
+    public static final String MAPPING_VERSION = "l1-v2";
+
+    private static final Pattern YEAR_PATTERN = Pattern.compile("(?<!\\d)(\\d{4})(?!\\d)");
+    private static final Pattern DOI_PATTERN = Pattern.compile("(?i)(?:https?://(?:dx\\.)?doi\\.org/|doi:\\s*)?(10\\.\\d{4,9}/\\S+)");
+    private static final Pattern HANDLE_URL_PATTERN = Pattern.compile(
+            "(?i)https?://(?:(?:hdl\\.)?handle\\.net/|[^/]+/handle/)(\\S+)");
+    private static final Map<String, String> ISO3_TO_ISO2 = buildIso3ToIso2();
 
     public Map<String, Object> buildMinimalMetadata(String oaiId, OAIRecordMetadata metadata, String targetUrl) {
         String title = firstNonBlank(fieldOccurrences(metadata, "dc.title"))
                 .orElseThrow(() -> new IllegalArgumentException("Missing dc.title"));
-        List<String> authors = dedupe(fieldOccurrences(metadata, "dc.creator"));
+        List<String> authors = normalizeAuthors(fieldOccurrences(metadata, "dc.creator"));
         if (authors.isEmpty()) {
-            throw new IllegalArgumentException("Missing dc.creator");
+            authors = normalizeAuthors(fieldOccurrences(metadata, "dc.contributor.author"));
+        }
+        if (authors.isEmpty()) {
+            throw new IllegalArgumentException("Missing dc.creator and dc.contributor.author");
         }
 
-        Integer year = extractYear(fieldOccurrences(metadata, "dc.date"))
+        Integer year = extractYear(dateOccurrences(metadata))
                 .orElseThrow(() -> new IllegalArgumentException("Missing parseable dc.date year"));
 
         LinkedHashMap<String, Object> minimalMetadata = new LinkedHashMap<>();
@@ -65,6 +76,11 @@ public class DarkLevel1MetadataService {
         addIdentifier(identifiers, "oai", oaiId);
 
         for (String value : dedupe(fieldOccurrences(metadata, "dc.identifier"))) {
+            String normalizedIdentifier = normalizePersistentIdentifier(value);
+            if (normalizedIdentifier != null) {
+                addIdentifier(identifiers, inferSchema(normalizedIdentifier), normalizedIdentifier);
+                continue;
+            }
             if (value.equals(targetUrl) || isHttpUrl(value)) {
                 continue;
             }
@@ -77,7 +93,7 @@ public class DarkLevel1MetadataService {
     private List<String> buildAlternateUrls(OAIRecordMetadata metadata, String targetUrl) {
         Set<String> urls = new LinkedHashSet<>();
         for (String value : fieldOccurrences(metadata, "dc.identifier")) {
-            if (!isHttpUrl(value)) {
+            if (!isHttpUrl(value) || normalizePersistentIdentifier(value) != null) {
                 continue;
             }
             String normalized = value.trim();
@@ -133,18 +149,34 @@ public class DarkLevel1MetadataService {
         if (preferred.isPresent()) {
             return preferred.get();
         }
-        return firstNonBlank(fieldOccurrences(metadata, "dc.description")).orElse(null);
+        return firstNonBlank(exactOccurrences(metadata, "dc.description")).orElse(null);
     }
 
     private List<String> fieldOccurrences(OAIRecordMetadata metadata, String fieldName) {
-        List<String> occurrences = metadata.getFieldOcurrences(fieldName);
-        List<String> qualifiedOccurrences = metadata.getFieldOcurrences(fieldName + ".*");
-        if (qualifiedOccurrences.isEmpty()) {
-            return occurrences;
-        }
-        List<String> result = new ArrayList<>(occurrences);
-        result.addAll(qualifiedOccurrences);
-        return result;
+        LinkedHashSet<String> result = new LinkedHashSet<>(exactOccurrences(metadata, fieldName));
+        result.addAll(safeOccurrences(metadata, fieldName + ".*"));
+        return new ArrayList<>(result);
+    }
+
+    public int countFieldOccurrences(OAIRecordMetadata metadata, String fieldName) {
+        return fieldOccurrences(metadata, fieldName).size();
+    }
+
+    private List<String> exactOccurrences(OAIRecordMetadata metadata, String fieldName) {
+        return new ArrayList<>(new LinkedHashSet<>(safeOccurrences(metadata, fieldName)));
+    }
+
+    private List<String> safeOccurrences(OAIRecordMetadata metadata, String selector) {
+        List<String> values = metadata.getFieldOcurrences(selector);
+        return values != null ? values : List.of();
+    }
+
+    private List<String> dateOccurrences(OAIRecordMetadata metadata) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        values.addAll(fieldOccurrences(metadata, "dc.date.issued"));
+        values.addAll(fieldOccurrences(metadata, "dc.date.created"));
+        values.addAll(fieldOccurrences(metadata, "dc.date"));
+        return new ArrayList<>(values);
     }
 
     private Optional<String> firstNonBlank(List<String> values) {
@@ -164,15 +196,62 @@ public class DarkLevel1MetadataService {
         return new ArrayList<>(result);
     }
 
+    private List<String> normalizeAuthors(List<String> values) {
+        LinkedHashSet<String> authors = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            String name = value.split("\\|\\|\\|", 2)[0].trim();
+            if (!name.isBlank()) {
+                authors.add(name);
+            }
+        }
+        return new ArrayList<>(authors);
+    }
+
     private String normalizeLanguage(String rawLanguage) {
         if (rawLanguage == null || rawLanguage.isBlank()) {
             return null;
         }
-        String value = rawLanguage.trim();
-        if (value.length() >= 2) {
-            return value.substring(0, 2).toLowerCase(Locale.ROOT);
+        String value = rawLanguage.trim().toLowerCase(Locale.ROOT);
+        String primary = value.split("[-_]", 2)[0];
+        if (primary.length() == 2) {
+            return primary;
         }
-        return value.toLowerCase(Locale.ROOT);
+        return ISO3_TO_ISO2.getOrDefault(primary, primary);
+    }
+
+    private String normalizePersistentIdentifier(String rawIdentifier) {
+        if (rawIdentifier == null || rawIdentifier.isBlank()) {
+            return null;
+        }
+        String value = rawIdentifier.trim();
+        Matcher doiMatcher = DOI_PATTERN.matcher(value);
+        if (doiMatcher.matches()) {
+            return doiMatcher.group(1).replaceAll("[\\s.,;]+$", "");
+        }
+        Matcher handleUrlMatcher = HANDLE_URL_PATTERN.matcher(value);
+        if (handleUrlMatcher.matches()) {
+            return "hdl:" + handleUrlMatcher.group(1).replaceAll("[\\s.,;]+$", "");
+        }
+        if (value.regionMatches(true, 0, "hdl:", 0, 4)) {
+            return "hdl:" + value.substring(4).trim();
+        }
+        return null;
+    }
+
+    private static Map<String, String> buildIso3ToIso2() {
+        Map<String, String> result = new HashMap<>();
+        Arrays.stream(Locale.getISOLanguages()).forEach(language -> {
+            Locale locale = Locale.forLanguageTag(language);
+            try {
+                result.put(locale.getISO3Language().toLowerCase(Locale.ROOT), language);
+            } catch (Exception ignored) {
+                // Ignore incomplete locale entries supplied by the runtime.
+            }
+        });
+        return result;
     }
 
     private boolean isHttpUrl(String value) {

@@ -34,6 +34,7 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
     private final CatalogDatabaseManager dbManager;
 
     private int pageSize = 100;
+    private int maxPages = 0;
     private int currentPage = 0;
     private int totalPages = 0;
     private long totalCount = 0;
@@ -72,6 +73,13 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
         this.pageSize = size;
     }
 
+    public void setMaxPages(int maxPages) {
+        if (initialized) {
+            throw new IllegalStateException("Cannot change max pages after paginator initialization");
+        }
+        this.maxPages = Math.max(0, maxPages);
+    }
+
     private void ensureInitialized() {
         if (initialized) {
             return;
@@ -85,6 +93,9 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
 
         totalCount = executeCount();
         totalPages = totalCount == 0 ? 0 : (int) Math.ceil((double) totalCount / pageSize);
+        if (maxPages > 0) {
+            totalPages = Math.min(totalPages, maxPages);
+        }
         initialized = true;
 
         logger.info("DARK catalog paginator initialized for snapshot {} with {} records", snapshotMetadata.getSnapshotId(), totalCount);

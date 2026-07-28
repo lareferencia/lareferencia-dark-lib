@@ -1,62 +1,36 @@
-# DARK Minter Mock Service
+# dARK v1 mock service
 
-A simple Python Flask service that simulates the DARK minter API for testing and demos.
-
-## Requirements
+This Flask service implements the endpoints used by `DarkMinterClient`.
 
 ```bash
 pip install flask
-```
-
-## Usage
-
-```bash
-cd tools
 python mock_minter.py
 ```
 
-The service runs on `http://localhost:5000`.
+Configure the harvester with:
 
-## Configuration
-
-Set `dark.minter.url=http://localhost:5000/` in your Spring application properties.
-
-## Endpoints
-
-### POST /load - Register new PIDs
-
-```bash
-curl -X POST http://localhost:5000/load \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dnam_pk": "test-key",
-    "items": [
-      {"oai_id": "oai:repo:123", "url": "https://example.com/123"}
-    ]
-  }'
+```properties
+dark.minter.base-url=http://localhost:5000
+dark.authority-id=test-authority
 ```
 
-### POST /update - Update URLs
+Reserve an ARK:
 
 ```bash
-curl -X POST http://localhost:5000/update \
-  -H "Content-Type: application/json" \
-  -d '{
-    "dnam_pk": "test-key",
-    "items": [
-      {"dark_id": "ark:/99999/abc123", "url": "https://new-url.com/123"}
-    ]
-  }'
+curl -X POST http://localhost:5000/api/v1/arks/batch \
+  -H 'Content-Type: application/json' \
+  -H 'X-Authority-Id: test-authority' \
+  -d '{"authority_id":"test-authority","naan":"99999","items":[{"client_item_id":"oai:repo:123"}]}'
 ```
 
-### GET /status - Health check
+Stage metadata using the returned ARK:
 
 ```bash
-curl http://localhost:5000/status
+curl -X PUT http://localhost:5000/api/v1/arks/ark:/99999/example \
+  -H 'Content-Type: application/json' \
+  -H 'X-Authority-Id: test-authority' \
+  -d '{"authority_id":"test-authority","target":"https://example.org/123","minimal_metadata":{"title":"Demo","authors":["Ada"],"year":2026}}'
 ```
 
-### GET /registry - List all registered PIDs
-
-```bash
-curl http://localhost:5000/registry
-```
+`GET /api/v1/arks/{ark}` returns the remote state. `/status` and `/registry`
+are mock-only diagnostic endpoints.

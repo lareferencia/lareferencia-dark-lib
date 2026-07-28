@@ -1,236 +1,115 @@
 #!/usr/bin/env python3
-"""
-DARK Minter Mock Service
-
-A simple Flask-based mock service that simulates the DARK minter API
-for testing and demo purposes.
-
-Endpoints:
-- POST /load   - Register new PIDs (returns minted ARKs)
-- POST /update - Update URLs for existing PIDs
-
-Usage:
-    pip install flask
-    python mock_minter.py
-
-The service runs on http://localhost:5000 by default.
-"""
+"""Small in-memory mock of the dARK v1 API used by DarkMinterClient."""
 
 import hashlib
-import time
-import uuid
-from datetime import datetime
-from flask import Flask, request, jsonify
+from datetime import datetime, timezone
+
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
-
-# In-memory storage for registered PIDs
-pid_registry = {}
+ark_registry = {}
 
 
-def generate_ark(oai_id: str) -> str:
-    """Generate a deterministic ARK from an OAI identifier."""
-    hash_bytes = hashlib.sha256(oai_id.encode()).hexdigest()[:12]
-    return f"99999/{hash_bytes}"
+def error(detail, status=400, code="VALIDATION_ERROR", retryable=False):
+    response = jsonify({"detail": detail})
+    response.status_code = status
+    response.headers["X-DARK-Error-Code"] = code
+    response.headers["X-DARK-Retryable"] = str(retryable).lower()
+    return response
 
 
-def generate_ark_hash(ark: str) -> str:
-    """Generate a mock ARK hash."""
-    return hashlib.sha256(ark.encode()).hexdigest()[:16]
+def validate_authority(payload):
+    authority = (payload or {}).get("authority_id")
+    header = request.headers.get("X-Authority-Id")
+    if not authority or header != authority:
+        return error("X-Authority-Id must match authority_id", 403, "AUTHORIZATION_FAILED")
+    return None
 
 
-def generate_tx_receipt() -> str:
-    """Generate a mock transaction receipt."""
-    return f"0x{uuid.uuid4().hex[:40]}"
+def response_for(record):
+    return {
+        "ark": record["ark"],
+        "state": record["state"],
+        "target": record.get("target"),
+        "metadata_schema": record.get("metadata_schema"),
+        "minimal_metadata": record.get("minimal_metadata"),
+        "client_item_id": record.get("client_item_id"),
+    }
 
 
-@app.route('/load', methods=['POST'])
-def register_pids():
-    """
-    Register new PIDs endpoint.
-    
-    Request:
-        {
-            "dnam_pk": "private-key",
-            "items": [
-                {"oai_id": "oai:repo:123", "url": "https://example.com/123"}
-            ]
-        }
-    
-    Response:
-        {
-            "ingested_pids": [
-                {
-                    "ark": "99999/abc123",
-                    "ark_hash": "hash...",
-                    "oai_id": "oai:repo:123",
-                    "ark_url": "https://ark.dark-pid.net/99999/abc123",
-                    "requested_url": "https://example.com/123",
-                    "tx_recipt": "0x..."
-                }
-            ],
-            "load_time": "0.5s",
-            "verify_time": "0.1s",
-            "wallet_addr": "0x1234..."
-        }
-    """
-    start_time = time.time()
-    
-    data = request.get_json()
-    items = data.get('items', [])
-    private_key = data.get('dnam_pk', '')
-    
-    print(f"[REGISTER] Received {len(items)} items")
-    
-    ingested_pids = []
-    
-    for item in items:
-        oai_id = item.get('oai_id')
-        url = item.get('url')
-        
-        if not oai_id:
+@app.post("/api/v1/arks/batch")
+def reserve_batch():
+    payload = request.get_json(silent=True) or {}
+    authority_error = validate_authority(payload)
+    if authority_error:
+        return authority_error
+    naan = str(payload.get("naan", "")).strip()
+    if not naan:
+        return error("naan is required")
+
+    results = []
+    errors = []
+    for index, item in enumerate(payload.get("items") or []):
+        client_item_id = str((item or {}).get("client_item_id", "")).strip()
+        if not client_item_id:
+            errors.append({"index": index, "client_item_id": None, "error": "client_item_id is required"})
             continue
-            
-        ark = generate_ark(oai_id)
-        ark_hash = generate_ark_hash(ark)
-        ark_url = f"https://ark.dark-pid.net/{ark}"
-        
-        # Store in registry
-        pid_registry[f"ark:/{ark}"] = {
-            'oai_id': oai_id,
-            'url': url,
-            'registered_at': datetime.now().isoformat()
-        }
-        
-        ingested_pids.append({
-            'ark': ark,
-            'ark_hash': ark_hash,
-            'oai_id': oai_id,
-            'ark_url': ark_url,
-            'requested_url': url,
-            'tx_recipt': generate_tx_receipt()
+        suffix = hashlib.sha256(client_item_id.encode()).hexdigest()[:12]
+        ark = f"ark:/{naan}/{suffix}"
+        record = ark_registry.setdefault(ark, {
+            "ark": ark,
+            "state": "R",
+            "client_item_id": client_item_id,
+            "reserved_at": datetime.now(timezone.utc).isoformat(),
         })
-        
-        print(f"  -> Minted ark:/{ark} for {oai_id}")
-    
-    elapsed = time.time() - start_time
-    
-    response = {
-        'ingested_pids': ingested_pids,
-        'load_time': f"{elapsed:.3f}s",
-        'verify_time': f"{elapsed * 0.2:.3f}s",
-        'wallet_addr': f"0x{hashlib.sha256(private_key.encode()).hexdigest()[:40]}"
-    }
-    
-    return jsonify(response)
+        results.append(response_for(record))
+    return jsonify({"results": results, "errors": errors})
 
 
-@app.route('/update', methods=['POST'])
-def update_urls():
-    """
-    Update URLs endpoint.
-    
-    Request:
-        {
-            "dnam_pk": "private-key",
-            "items": [
-                {"dark_id": "ark:/99999/abc123", "url": "https://new-url.com/123"}
-            ]
-        }
-    
-    Response:
-        {
-            "updated_pids": [
-                {
-                    "ark_hash": "hash...",
-                    "dark_id": "ark:/99999/abc123",
-                    "previous_url": "https://old-url.com/123",
-                    "tx_recipt": "0x...",
-                    "update_url": "https://new-url.com/123"
-                }
-            ],
-            "not_updated_pids": []
-        }
-    """
-    data = request.get_json()
-    items = data.get('items', [])
-    
-    print(f"[UPDATE] Received {len(items)} items")
-    
-    updated_pids = []
-    not_updated_pids = []
-    
-    for item in items:
-        dark_id = item.get('dark_id')
-        new_url = item.get('url')
-        
-        if not dark_id:
-            continue
-        
-        if dark_id in pid_registry:
-            previous_url = pid_registry[dark_id].get('url', '')
-            pid_registry[dark_id]['url'] = new_url
-            pid_registry[dark_id]['updated_at'] = datetime.now().isoformat()
-            
-            updated_pids.append({
-                'ark_hash': generate_ark_hash(dark_id),
-                'dark_id': dark_id,
-                'previous_url': previous_url,
-                'tx_recipt': generate_tx_receipt(),
-                'update_url': new_url
-            })
-            
-            print(f"  -> Updated {dark_id}: {previous_url} -> {new_url}")
-        else:
-            # For demo purposes, accept unknown PIDs too
-            pid_registry[dark_id] = {
-                'url': new_url,
-                'registered_at': datetime.now().isoformat()
-            }
-            
-            updated_pids.append({
-                'ark_hash': generate_ark_hash(dark_id),
-                'dark_id': dark_id,
-                'previous_url': '',
-                'tx_recipt': generate_tx_receipt(),
-                'update_url': new_url
-            })
-            
-            print(f"  -> Created and updated {dark_id}")
-    
-    response = {
-        'updated_pids': updated_pids,
-        'not_updated_pids': not_updated_pids
-    }
-    
-    return jsonify(response)
+@app.put("/api/v1/arks/<path:ark>")
+def stage_ark(ark):
+    ark = ark if ark.startswith("ark:/") else f"ark:/{ark}"
+    record = ark_registry.get(ark)
+    if record is None:
+        return error("ARK not found", 404, "ARK_NOT_FOUND")
+    payload = request.get_json(silent=True) or {}
+    authority_error = validate_authority(payload)
+    if authority_error:
+        return authority_error
+    minimal = payload.get("minimal_metadata") or {}
+    if not minimal.get("title") or not minimal.get("authors") or minimal.get("year") is None:
+        return error("minimal_metadata requires title, authors and year")
 
-
-@app.route('/status', methods=['GET'])
-def status():
-    """Health check and registry status."""
-    return jsonify({
-        'status': 'ok',
-        'registered_pids': len(pid_registry),
-        'timestamp': datetime.now().isoformat()
+    record.update({
+        "state": "D",
+        "target": payload.get("target"),
+        "minimal_metadata": minimal,
+        "original_metadata": payload.get("original_metadata"),
+        "metadata_schema": payload.get("metadata_schema"),
+        "metadata_media_type": payload.get("metadata_media_type"),
+        "staged_at": datetime.now(timezone.utc).isoformat(),
     })
+    return jsonify(response_for(record))
 
 
-@app.route('/registry', methods=['GET'])
-def list_registry():
-    """List all registered PIDs (for debugging)."""
-    return jsonify(pid_registry)
+@app.get("/api/v1/arks/<path:ark>")
+def get_ark(ark):
+    ark = ark if ark.startswith("ark:/") else f"ark:/{ark}"
+    record = ark_registry.get(ark)
+    if record is None:
+        return error("ARK not found", 404, "ARK_NOT_FOUND")
+    return jsonify(response_for(record))
 
 
-if __name__ == '__main__':
-    print("=" * 60)
-    print("DARK Minter Mock Service")
-    print("=" * 60)
-    print("Endpoints:")
-    print("  POST /load   - Register new PIDs")
-    print("  POST /update - Update URLs")
-    print("  GET  /status - Health check")
-    print("  GET  /registry - List all PIDs")
-    print("=" * 60)
-    
-    app.run(host='0.0.0.0', port=5000, debug=True)
+@app.get("/status")
+def status():
+    return jsonify({"status": "ok", "registered_arks": len(ark_registry)})
+
+
+@app.get("/registry")
+def registry():
+    return jsonify(ark_registry)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)

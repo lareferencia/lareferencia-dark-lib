@@ -37,6 +37,9 @@ public class DarkTrackingRecord {
     @Column(name = "source_metadata_hash", length = 128)
     private String sourceMetadataHash;
 
+    @Column(name = "stage_payload_hash", length = 64)
+    private String stagePayloadHash;
+
     @Column(name = "target_url", length = 2000)
     private String targetUrl;
 
@@ -100,7 +103,7 @@ public class DarkTrackingRecord {
         id.setOaiId(oaiId);
     }
 
-    public boolean samePayload(String metadataHash, String target) {
-        return Objects.equals(sourceMetadataHash, metadataHash) && Objects.equals(targetUrl, target);
+    public boolean samePayload(String payloadHash) {
+        return Objects.equals(stagePayloadHash, payloadHash);
     }
 }

@@ -114,7 +114,7 @@ public class DarkMinterClient {
             String body = response.body();
             logger.debug("dARK minter responded [{}] {}", response.statusCode(), body);
 
-            if (response.statusCode() >= 400) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String errorMessage = extractErrorMessage(body);
                 String errorCode = extractErrorCode(response);
                 boolean retryable = extractRetryable(response);
@@ -130,7 +130,28 @@ public class DarkMinterClient {
                         body);
             }
 
-            return objectMapper.readValue(body, responseType);
+            if (body == null || body.isBlank()) {
+                throw new DarkMinterClientException(
+                        502,
+                        request.method(),
+                        request.uri(),
+                        "EMPTY_RESPONSE",
+                        true,
+                        "Empty success response from dARK minter",
+                        body);
+            }
+            T parsed = objectMapper.readValue(body, responseType);
+            if (parsed == null) {
+                throw new DarkMinterClientException(
+                        502,
+                        request.method(),
+                        request.uri(),
+                        "INVALID_RESPONSE",
+                        true,
+                        "Null JSON response from dARK minter",
+                        body);
+            }
+            return parsed;
         } catch (IOException e) {
             throw new DarkMinterClientException(
                     500,

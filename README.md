@@ -1,10 +1,28 @@
 # LA Referencia DARK Library
 
-DARK (decescentralized ARK) library for persistent identifier minting and management.
+DARK (decentralized ARK) library for persistent identifier minting and management.
 
 ## 🎯 Functionality
 
-Provides integration with DARK services for minting and managing persistent identifiers (PIDs) associated with harvested metadata records. Includes OAI-to-DARK identifier mapping, credential management, and batch processing capabilities.
+Provides integration with the dARK v1 service for reserving ARKs, staging Level 1
+and original metadata, reconciling remote state, and publishing confirmed ARKs
+into harvested records.
+
+Level 1 authors are read from `dc.creator`, with `dc.contributor.author` as a
+fallback. Values formatted as `Name|||ORCID` are sent as `Name`.
+
+The worker settings use nested configuration:
+
+```properties
+dark.minter.base-url=http://localhost:8001
+dark.stage.page-size=100
+dark.stage.max-pages-per-run=0
+dark.reserve.batch-size=100
+dark.reconcile.page-size=100
+```
+
+Set `dark.stage.max-pages-per-run=1` for a bounded first deployment; `0` means
+unlimited. See [`tools/README.md`](tools/README.md) for the current mock API.
 
 ## 📄 License
 

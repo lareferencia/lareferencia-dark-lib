@@ -16,11 +16,11 @@ public class DarkProperties {
 
     private Minter minter = new Minter();
     private Metadata metadata = new Metadata();
+    private Stage stage = new Stage();
+    private Reserve reserve = new Reserve();
+    private Reconcile reconcile = new Reconcile();
     private String authorityId;
     private String authHeaderName = "X-Authority-Id";
-    private int stagePageSize = 100;
-    private int reserveBatchSize = 100;
-    private int reconcilePageSize = 100;
 
     public String getAuthorityId() {
         return normalize(authorityId);
@@ -85,6 +85,63 @@ public class DarkProperties {
         private String mediaType = "application/xml";
     }
 
+    @Getter
+    @Setter
+    public static class Stage {
+        private int pageSize = 100;
+        private int maxPagesPerRun = 0;
+    }
+
+    @Getter
+    @Setter
+    public static class Reserve {
+        private int batchSize = 100;
+    }
+
+    @Getter
+    @Setter
+    public static class Reconcile {
+        private int pageSize = 100;
+    }
+
+    public int getStagePageSize() {
+        return stage != null ? Math.max(1, stage.getPageSize()) : 100;
+    }
+
+    public void setStagePageSize(int stagePageSize) {
+        ensureStage().setPageSize(stagePageSize);
+    }
+
+    public int getStageMaxPagesPerRun() {
+        return stage != null ? Math.max(0, stage.getMaxPagesPerRun()) : 0;
+    }
+
+    public void setStageMaxPagesPerRun(int maxPagesPerRun) {
+        ensureStage().setMaxPagesPerRun(maxPagesPerRun);
+    }
+
+    public int getReserveBatchSize() {
+        return reserve != null ? Math.max(1, reserve.getBatchSize()) : 100;
+    }
+
+    public void setReserveBatchSize(int reserveBatchSize) {
+        if (reserve == null) {
+            reserve = new Reserve();
+        }
+        reserve.setBatchSize(reserveBatchSize);
+    }
+
+    public int getReconcilePageSize() {
+        return reconcile != null ? Math.max(1, reconcile.getPageSize()) : 100;
+    }
+
+    public void setReconcilePageSize(int reconcilePageSize) {
+        if (reconcile == null) {
+            reconcile = new Reconcile();
+        }
+        reconcile.setPageSize(reconcilePageSize);
+    }
+
     public String getMetadataSchema() {
         return metadata != null ? normalize(metadata.getSchema()) : null;
     }
@@ -109,5 +166,12 @@ public class DarkProperties {
 
     private static String normalize(String value) {
         return value == null ? null : value.trim();
+    }
+
+    private Stage ensureStage() {
+        if (stage == null) {
+            stage = new Stage();
+        }
+        return stage;
     }
 }
