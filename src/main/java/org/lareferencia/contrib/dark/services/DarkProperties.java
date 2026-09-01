@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @Getter
 @Setter
@@ -21,6 +22,24 @@ public class DarkProperties {
     private Reconcile reconcile = new Reconcile();
     private String authorityId;
     private String authHeaderName = "X-Authority-Id";
+
+    /** Applies the installation configuration loaded from the database. */
+    public synchronized void applyRuntimeConfiguration(ObjectNode client, ObjectNode runtimeStage, ObjectNode runtimeReconcile) {
+        if (client.has("baseUrl")) minter.setBaseUrl(client.path("baseUrl").asText());
+        if (client.has("authorityId")) setAuthorityId(client.path("authorityId").isNull() ? null : client.path("authorityId").asText());
+        if (client.has("authHeaderName")) setAuthHeaderName(client.path("authHeaderName").asText());
+        if (client.has("maxRetries")) minter.getRetry().setMaxRetries(client.path("maxRetries").asInt());
+        if (client.has("backoffSeconds") && client.path("backoffSeconds").isArray()) {
+            List<Long> values = new ArrayList<>(); client.path("backoffSeconds").forEach(item -> values.add(item.asLong()));
+            minter.getRetry().setBackoffSeconds(values);
+        }
+        if (runtimeStage.has("metadataSchema")) setMetadataSchema(runtimeStage.path("metadataSchema").asText());
+        if (runtimeStage.has("metadataMediaType")) setMetadataMediaType(runtimeStage.path("metadataMediaType").asText());
+        if (runtimeStage.has("pageSize")) setStagePageSize(runtimeStage.path("pageSize").asInt());
+        if (runtimeStage.has("maxPagesPerRun")) setStageMaxPagesPerRun(runtimeStage.path("maxPagesPerRun").asInt());
+        if (runtimeStage.has("reserveBatchSize")) setReserveBatchSize(runtimeStage.path("reserveBatchSize").asInt());
+        if (runtimeReconcile.has("pageSize")) setReconcilePageSize(runtimeReconcile.path("pageSize").asInt());
+    }
 
     public String getAuthorityId() {
         return normalize(authorityId);
