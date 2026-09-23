@@ -77,14 +77,14 @@ class DarkReconcileWorkerTest {
         DarkTrackingRecord record = new DarkTrackingRecord();
         record.setOaiId("oai:test:1");
         record.setArkNaan("12345");
-        record.setArk("ark:/12345/abc");
+        record.setArk("ark:12345/abc");
         record.setState(DarkTrackingState.DRAFT);
 
         ARKResponse response = new ARKResponse();
-        response.setArk("ark:/12345/abc");
+        response.setArk("ark:12345/abc");
         response.setState(DarkRemoteState.PUBLISHED);
 
-        when(darkMinterClient.getArk("ark:/12345/abc")).thenReturn(response);
+        when(darkMinterClient.getArk("ark:12345/abc")).thenReturn(response);
 
         worker.processItem(record);
 
@@ -98,16 +98,17 @@ class DarkReconcileWorkerTest {
         DarkTrackingRecord record = new DarkTrackingRecord();
         record.setOaiId("oai:test:2");
         record.setArkNaan("12345");
-        record.setArk("ark:/12345/def");
+        record.setArk("ark:12345/def");
         record.setState(DarkTrackingState.UPDATE);
 
-        when(darkMinterClient.getArk("ark:/12345/def"))
+        when(darkMinterClient.getArk("ark:12345/def"))
                 .thenThrow(new DarkMinterClientException(404, "ARK not found"));
 
         worker.processItem(record);
 
         assertEquals(DarkTrackingState.ERROR, record.getState());
-        assertEquals("dARK minter error 404: ARK not found", record.getLastError());
+        assertTrue(record.getLastError().contains("\"category\":\"REMOTE_PERMANENT\""));
+        assertTrue(record.getLastError().contains("\"phase\":\"READ_REMOTE_STATE\""));
         verify(darkTrackingRepository).save(record);
     }
 
@@ -117,10 +118,10 @@ class DarkReconcileWorkerTest {
         DarkTrackingRecord record = new DarkTrackingRecord();
         record.setOaiId("oai:test:3");
         record.setArkNaan("12345");
-        record.setArk("ark:/12345/systemic");
+        record.setArk("ark:12345/systemic");
         record.setState(DarkTrackingState.DRAFT);
 
-        when(darkMinterClient.getArk("ark:/12345/systemic"))
+        when(darkMinterClient.getArk("ark:12345/systemic"))
                 .thenThrow(new DarkMinterClientException(500, "Internal server error"));
 
         assertThrows(DarkMinterClientException.class, () -> worker.processItem(record));
@@ -135,14 +136,14 @@ class DarkReconcileWorkerTest {
         DarkTrackingRecord record = new DarkTrackingRecord();
         record.setOaiId("oai:test:4");
         record.setArkNaan("12345");
-        record.setArk("ark:/12345/reserved");
+        record.setArk("ark:12345/reserved");
         record.setState(DarkTrackingState.RESERVED);
 
         ARKResponse response = new ARKResponse();
-        response.setArk("ark:/12345/reserved");
+        response.setArk("ark:12345/reserved");
         response.setState(DarkRemoteState.DRAFT);
 
-        when(darkMinterClient.getArk("ark:/12345/reserved")).thenReturn(response);
+        when(darkMinterClient.getArk("ark:12345/reserved")).thenReturn(response);
 
         worker.processItem(record);
 

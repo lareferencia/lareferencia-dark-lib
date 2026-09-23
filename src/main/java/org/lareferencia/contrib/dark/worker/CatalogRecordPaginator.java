@@ -20,6 +20,7 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -32,6 +33,7 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
 
     private final SnapshotMetadata snapshotMetadata;
     private final CatalogDatabaseManager dbManager;
+    private final List<String> selectedOaiIds;
 
     private int pageSize = 100;
     private int maxPages = 0;
@@ -41,8 +43,14 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
     private boolean initialized = false;
 
     public CatalogRecordPaginator(SnapshotMetadata snapshotMetadata, CatalogDatabaseManager dbManager) {
+        this(snapshotMetadata, dbManager, List.of());
+    }
+
+    public CatalogRecordPaginator(SnapshotMetadata snapshotMetadata, CatalogDatabaseManager dbManager,
+            Collection<String> selectedOaiIds) {
         this.snapshotMetadata = snapshotMetadata;
         this.dbManager = dbManager;
+        this.selectedOaiIds = selectedOaiIds == null ? List.of() : selectedOaiIds.stream().distinct().toList();
     }
 
     @Override
@@ -107,10 +115,15 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
             return 0;
         }
 
+        String sql = "SELECT COUNT(*) FROM oai_record WHERE deleted = 0" + selectedClause();
         try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM oai_record WHERE deleted = 0");
-             ResultSet resultSet = statement.executeQuery()) {
+             PreparedStatement statement = connection.prepareStatement(sql);
+        ) {
+            bindSelectedOaiIds(statement, 1);
+            ResultSet resultSet = statement.executeQuery();
+            try (resultSet) {
             return resultSet.next() ? resultSet.getLong(1) : 0;
+            }
         } catch (SQLException e) {
             throw new PaginatorException("Unable to count harvested records for dARK staging", e);
         }
@@ -127,14 +140,16 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
                 SELECT id, identifier, datestamp, original_metadata_hash, deleted
                 FROM oai_record
                 WHERE deleted = 0
+                %s
                 ORDER BY id
                 LIMIT ? OFFSET ?
-                """;
+                """.formatted(selectedClause());
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setInt(1, size);
-            statement.setInt(2, page * size);
+                int nextParameter = bindSelectedOaiIds(statement, 1);
+                statement.setInt(nextParameter++, size);
+                statement.setInt(nextParameter, page * size);
 
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
@@ -155,5 +170,18 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
         }
 
         return records;
+    }
+
+    private String selectedClause() {
+        if (selectedOaiIds.isEmpty()) return "";
+        return " AND identifier IN (" + String.join(",", java.util.Collections.nCopies(selectedOaiIds.size(), "?")) + ")";
+    }
+
+    private int bindSelectedOaiIds(PreparedStatement statement, int firstParameter) throws SQLException {
+        int parameter = firstParameter;
+        for (String oaiId : selectedOaiIds) {
+            statement.setString(parameter++, oaiId);
+        }
+        return parameter;
     }
 }

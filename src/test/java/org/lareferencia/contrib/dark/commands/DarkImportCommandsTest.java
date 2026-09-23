@@ -44,7 +44,7 @@ class DarkImportCommandsTest {
         DarkTrackingRecord record = saved.get();
         assertEquals("41046", record.getArkNaan());
         assertEquals("oai:repositorio.ufrn.br:123456789/46761", record.getOaiId());
-        assertEquals("ark:/41046/001300001kq89", record.getArk());
+        assertEquals("ark:41046/001300001kq89", record.getArk());
         assertEquals(DarkTrackingState.UPDATE, record.getState());
         assertNull(record.getStagePayloadHash());
         assertNull(record.getLastStagedAt());
@@ -71,7 +71,7 @@ class DarkImportCommandsTest {
         Path csv = temporaryDirectory.resolve("dark.csv");
         Files.writeString(csv,
                 "darkidentifier,oaiidentifier,datestamp,itemurl,lastmodified\n"
-                        + "ark:/41046/001300001kq89,oai:repositorio.ufrn.br:123456789/46761,"
+                        + "ark:41046/001300001kq89,oai:repositorio.ufrn.br:123456789/46761,"
                         + "2025-07-31 12:28:05.320471,https://repositorio.ufrn.br/handle/123456789/46761,"
                         + "2025-09-27 00:18:26.628545\n");
         return csv;

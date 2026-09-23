@@ -107,7 +107,7 @@ class DarkStageWorkerTest {
 
         ReserveBatchResponse reserveResponse = new ReserveBatchResponse();
         ARKResponse reserveItem = new ARKResponse();
-        reserveItem.setArk("ark:/12345/abc");
+        reserveItem.setArk("ark:12345/abc");
         reserveItem.setState(DarkRemoteState.RESERVED);
         reserveItem.setClientItemId("oai:test:1");
         reserveResponse.setResults(List.of(reserveItem));
@@ -115,9 +115,9 @@ class DarkStageWorkerTest {
                 .thenReturn(reserveResponse);
 
         ARKResponse stageResponse = new ARKResponse();
-        stageResponse.setArk("ark:/12345/abc");
+        stageResponse.setArk("ark:12345/abc");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:/12345/abc"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/abc"), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
@@ -128,7 +128,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord reserved = captor.getAllValues().get(0);
         assertEquals("12345", reserved.getArkNaan());
         assertEquals("oai:test:1", reserved.getOaiId());
-        assertEquals("ark:/12345/abc", reserved.getArk());
+        assertEquals("ark:12345/abc", reserved.getArk());
         assertEquals(DarkTrackingState.RESERVED, reserved.getState());
         assertEquals("hash-1", reserved.getSourceMetadataHash());
         assertEquals("https://example.org/resource/1", reserved.getTargetUrl());
@@ -136,7 +136,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("12345", saved.getArkNaan());
         assertEquals("oai:test:1", saved.getOaiId());
-        assertEquals("ark:/12345/abc", saved.getArk());
+        assertEquals("ark:12345/abc", saved.getArk());
         assertEquals("hash-1", saved.getSourceMetadataHash());
         assertEquals("https://example.org/resource/1", saved.getTargetUrl());
         assertEquals(DarkTrackingState.DRAFT, saved.getState());
@@ -158,7 +158,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:2");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/existing");
+        trackingRecord.setArk("ark:12345/existing");
         trackingRecord.setSourceMetadataHash("hash-2");
         trackingRecord.setStagePayloadHash(ReflectionTestUtils.invokeMethod(
                 worker,
@@ -226,13 +226,13 @@ class DarkStageWorkerTest {
 
         ReserveBatchResponse reserveResponse = new ReserveBatchResponse();
         ARKResponse reserveItem = new ARKResponse();
-        reserveItem.setArk("ark:/12345/retry");
+        reserveItem.setArk("ark:12345/retry");
         reserveItem.setState(DarkRemoteState.RESERVED);
         reserveItem.setClientItemId("oai:test:4");
         reserveResponse.setResults(List.of(reserveItem));
         when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:4")))
                 .thenReturn(reserveResponse);
-        when(darkMinterClient.stageArk(eq("ark:/12345/retry"), any()))
+        when(darkMinterClient.stageArk(eq("ark:12345/retry"), any()))
                 .thenThrow(new DarkMinterClientException(500, "Internal server error"));
 
         worker.prePage();
@@ -243,18 +243,19 @@ class DarkStageWorkerTest {
         verify(darkTrackingRepository, times(2)).save(captor.capture());
         DarkTrackingRecord reserved = captor.getAllValues().get(0);
         assertEquals("oai:test:4", reserved.getOaiId());
-        assertEquals("ark:/12345/retry", reserved.getArk());
+        assertEquals("ark:12345/retry", reserved.getArk());
         assertEquals(DarkTrackingState.RESERVED, reserved.getState());
         assertEquals("hash-4", reserved.getSourceMetadataHash());
         assertEquals("https://example.org/resource/4", reserved.getTargetUrl());
 
         DarkTrackingRecord saved = captor.getAllValues().get(1);
         assertEquals("oai:test:4", saved.getOaiId());
-        assertEquals("ark:/12345/retry", saved.getArk());
+        assertEquals("ark:12345/retry", saved.getArk());
         assertEquals(DarkTrackingState.RESERVED, saved.getState());
         assertEquals("hash-4", saved.getSourceMetadataHash());
         assertEquals("https://example.org/resource/4", saved.getTargetUrl());
-        assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
+        assertTrue(saved.getLastError().contains("\"category\":\"REMOTE_TRANSIENT\""));
+        assertTrue(saved.getLastError().contains("\"phase\":\"STAGE\""));
     }
 
     @Test
@@ -264,7 +265,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:5");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/update");
+        trackingRecord.setArk("ark:12345/update");
         trackingRecord.setSourceMetadataHash("hash-5-old");
         trackingRecord.setTargetUrl("https://example.org/resource/5/old");
         trackingRecord.setState(DarkTrackingState.PUBLISHED);
@@ -276,7 +277,7 @@ class DarkStageWorkerTest {
         when(level1MetadataService.buildMinimalMetadata(eq("oai:test:5"), any(), eq("https://example.org/resource/5/new")))
                 .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:5"))).thenReturn(Optional.of(trackingRecord));
-        when(darkMinterClient.stageArk(eq("ark:/12345/update"), any()))
+        when(darkMinterClient.stageArk(eq("ark:12345/update"), any()))
                 .thenThrow(new DarkMinterClientException(500, "Internal server error"));
 
         worker.prePage();
@@ -289,7 +290,8 @@ class DarkStageWorkerTest {
         assertEquals(DarkTrackingState.UPDATE, saved.getState());
         assertEquals("hash-5-new", saved.getSourceMetadataHash());
         assertEquals("https://example.org/resource/5/new", saved.getTargetUrl());
-        assertEquals("dARK minter error 500: Internal server error", saved.getLastError());
+        assertTrue(saved.getLastError().contains("\"category\":\"REMOTE_TRANSIENT\""));
+        assertTrue(saved.getLastError().contains("\"phase\":\"STAGE\""));
     }
 
     @Test
@@ -299,7 +301,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:6");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/update-success");
+        trackingRecord.setArk("ark:12345/update-success");
         trackingRecord.setSourceMetadataHash("hash-6-old");
         trackingRecord.setTargetUrl("https://example.org/resource/6/old");
         trackingRecord.setState(DarkTrackingState.PUBLISHED);
@@ -313,9 +315,9 @@ class DarkStageWorkerTest {
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:6"))).thenReturn(Optional.of(trackingRecord));
 
         ARKResponse stageResponse = new ARKResponse();
-        stageResponse.setArk("ark:/12345/update-success");
+        stageResponse.setArk("ark:12345/update-success");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:/12345/update-success"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/update-success"), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
@@ -337,7 +339,7 @@ class DarkStageWorkerTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:7");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/update-state");
+        trackingRecord.setArk("ark:12345/update-state");
         trackingRecord.setSourceMetadataHash("hash-7");
         trackingRecord.setTargetUrl("https://example.org/resource/7");
         trackingRecord.setState(DarkTrackingState.UPDATE);
@@ -351,16 +353,16 @@ class DarkStageWorkerTest {
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:7"))).thenReturn(Optional.of(trackingRecord));
 
         ARKResponse stageResponse = new ARKResponse();
-        stageResponse.setArk("ark:/12345/update-state");
+        stageResponse.setArk("ark:12345/update-state");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:/12345/update-state"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/update-state"), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
         worker.postPage();
 
         verify(metadataStore).getMetadata(any(), eq("hash-7"));
-        verify(darkMinterClient).stageArk(eq("ark:/12345/update-state"), any());
+        verify(darkMinterClient).stageArk(eq("ark:12345/update-state"), any());
         verify(darkTrackingRepository).save(trackingRecord);
         assertEquals(DarkTrackingState.DRAFT, trackingRecord.getState());
     }

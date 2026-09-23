@@ -39,7 +39,7 @@ darkidentifier,oaiidentifier,datestamp,itemurl,lastmodified
 Example:
 
 ```csv
-ark:/41046/001300001kq89,oai:repositorio.ufrn.br:123456789/46761,2025-07-31 12:28:05.320471,https://repositorio.ufrn.br/handle/123456789/46761,2025-09-27 00:18:26.628545
+ark:41046/001300001kq89,oai:repositorio.ufrn.br:123456789/46761,2025-07-31 12:28:05.320471,https://repositorio.ufrn.br/handle/123456789/46761,2025-09-27 00:18:26.628545
 ```
 
 ```text
@@ -75,4 +75,4 @@ See [LICENSE.txt](../LICENSE.txt) for complete terms.
 ---
 
 **LA Referencia** - Red Latinoamericana y de España de Ciencia Abierta  
-Part of the LA Referencia Platform 5.0.0-rc
+Part of the LA Referencia Platform 5.0.0-rc2

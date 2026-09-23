@@ -10,6 +10,7 @@ import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
 import org.lareferencia.contrib.dark.domain.DarkTrackingState;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
+import org.lareferencia.contrib.dark.services.DarkErrorCodec;
 import org.lareferencia.contrib.dark.services.DarkProperties;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.List;
 
 public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, NetworkRunningContext> {
 
@@ -35,6 +37,8 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Autowired
     private DarkNetworkSettingsResolver darkNetworkSettingsResolver;
+
+    private final DarkErrorCodec darkErrorCodec = new DarkErrorCodec();
 
     private String currentArkNaan;
     private int pageProcessed;
@@ -56,6 +60,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
     private long runInitialPending;
     private LocalDateTime runStartedAt;
     private Collection<DarkTrackingState> reconcileStates;
+    private List<String> selectedOaiIds = List.of();
 
     @Override
     protected void preRun() {
@@ -68,13 +73,16 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
                 DarkTrackingState.DRAFT,
                 DarkTrackingState.UPDATE,
                 DarkTrackingState.ERROR);
-        runInitialPending = darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(
-                currentArkNaan,
-                reconcileStates);
-        DarkTrackingPaginator paginator = new DarkTrackingPaginator(
-                darkTrackingRepository,
-                currentArkNaan,
-                reconcileStates);
+        selectedOaiIds = runningContext instanceof DarkManualRunningContext manualContext
+                ? manualContext.getOaiIds() : List.of();
+        runInitialPending = selectedOaiIds.isEmpty()
+                ? darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(currentArkNaan, reconcileStates)
+                : darkTrackingRepository.findByIdArkNaanAndIdOaiIdInAndArkIsNotNullAndStateIn(
+                        currentArkNaan, selectedOaiIds, reconcileStates,
+                        org.springframework.data.domain.PageRequest.of(0, selectedOaiIds.size())).getTotalElements();
+        org.lareferencia.core.worker.IPaginator<DarkTrackingRecord> paginator = selectedOaiIds.isEmpty()
+                ? new DarkTrackingPaginator(darkTrackingRepository, currentArkNaan, reconcileStates)
+                : new SelectedDarkTrackingPaginator(darkTrackingRepository, currentArkNaan, selectedOaiIds, reconcileStates);
         paginator.setPageSize(getPageSize());
         setPaginator(paginator);
         logger.info(
@@ -130,7 +138,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
             }
             logger.warn("Failed reconciling ARK {}: {}", record.getArk(), e.getMessage());
             record.setState(DarkTrackingState.ERROR);
-            record.setLastError(e.getMessage());
+            record.setLastError(darkErrorCodec.encode(e, "READ_REMOTE_STATE"));
             record.setLastReconciledAt(LocalDateTime.now());
             darkTrackingRepository.save(record);
             pageErrors++;
@@ -145,7 +153,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     public void postPage() {
-        logger.info(
+        logger.debug(
                 "DARK reconcile page summary for network {} | processed={} | skippedWithoutArk={} | published={} | reserved={} | draft={} | update={} | tombstone={} | errors={}",
                 runningContext.getNetwork().getAcronym(),
                 pageProcessed,
@@ -160,9 +168,11 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     protected void postRun() {
-        long remainingPending = darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(
-                currentArkNaan,
-                reconcileStates);
+        long remainingPending = selectedOaiIds.isEmpty()
+                ? darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(currentArkNaan, reconcileStates)
+                : darkTrackingRepository.findByIdArkNaanAndIdOaiIdInAndArkIsNotNullAndStateIn(
+                        currentArkNaan, selectedOaiIds, reconcileStates,
+                        org.springframework.data.domain.PageRequest.of(0, selectedOaiIds.size())).getTotalElements();
         long durationSeconds = runStartedAt == null ? 0 : Duration.between(runStartedAt, LocalDateTime.now()).toSeconds();
         logger.info(
                 "DARK reconcile run summary for network {} | processed={} | initialPending={} | remainingPending={} | durationSeconds={} | skippedWithoutArk={} | published={} | reserved={} | draft={} | update={} | tombstone={} | errors={}",
@@ -217,5 +227,19 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
         runInitialPending = 0;
         runStartedAt = null;
         reconcileStates = null;
+        selectedOaiIds = List.of();
+    }
+
+    @Override
+    public String getStatus() {
+        DarkManualProgress progress = getManualProgress();
+        return "phase=" + progress.phase() + " processed=" + progress.processed() + " succeeded="
+                + progress.succeeded() + " skipped=" + progress.skipped() + " failed=" + progress.failed();
+    }
+
+    public DarkManualProgress getManualProgress() {
+        return new DarkManualProgress("RECONCILE", runProcessed,
+                runPublished + runReserved + runDraft + runUpdated + runTombstone,
+                runSkippedWithoutArk, runErrors);
     }
 }

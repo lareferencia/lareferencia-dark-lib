@@ -11,6 +11,7 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -36,6 +37,12 @@ public class DarkTrackingRecord {
 
     @Column(name = "source_metadata_hash", length = 128)
     private String sourceMetadataHash;
+
+    @Column(name = "source_network_id")
+    private Long sourceNetworkId;
+
+    @Column(name = "source_snapshot_id")
+    private Long sourceSnapshotId;
 
     @Column(name = "stage_payload_hash", length = 64)
     private String stagePayloadHash;
@@ -79,6 +86,10 @@ public class DarkTrackingRecord {
 
     public boolean hasArk() {
         return ark != null && !ark.isBlank();
+    }
+
+    public void setArk(String ark) {
+        this.ark = DarkArkIdentifier.normalize(ark);
     }
 
     public String getArkNaan() {

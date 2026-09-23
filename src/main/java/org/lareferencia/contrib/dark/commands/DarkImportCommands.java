@@ -6,6 +6,7 @@ import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
 import org.lareferencia.contrib.dark.domain.DarkTrackingRecordId;
 import org.lareferencia.contrib.dark.domain.DarkTrackingState;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
+import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
 import org.springframework.shell.standard.ShellOption;
@@ -34,7 +35,7 @@ import java.util.regex.Pattern;
 @ShellComponent
 public class DarkImportCommands {
 
-    private static final Pattern ARK_PATTERN = Pattern.compile("^ark:/([^/\\s]+)/.+$");
+    private static final Pattern ARK_PATTERN = Pattern.compile("^ark:([^/\\s]+)/.+$");
     private static final DateTimeFormatter LEGACY_TIMESTAMP = new DateTimeFormatterBuilder()
             .appendPattern("yyyy-MM-dd HH:mm:ss")
             .optionalStart()
@@ -141,7 +142,7 @@ public class DarkImportCommands {
     }
 
     private LegacyRecord toLegacyRecord(String[] row, Map<String, Integer> columns, int line) {
-        String ark = field(row, columns, "darkidentifier", line, true);
+        String ark = DarkArkIdentifier.normalize(field(row, columns, "darkidentifier", line, true));
         Matcher matcher = ARK_PATTERN.matcher(ark);
         if (!matcher.matches()) {
             throw new IllegalArgumentException("Invalid ARK at CSV line " + line + ": " + ark);

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 
 import java.util.Map;
 
@@ -37,4 +38,8 @@ public class ARKResponse {
 
     @JsonProperty("client_item_id")
     private String clientItemId;
+
+    public void setArk(String ark) {
+        this.ark = DarkArkIdentifier.normalize(ark);
+    }
 }

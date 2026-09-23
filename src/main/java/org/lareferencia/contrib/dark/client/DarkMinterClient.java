@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -60,7 +61,7 @@ public class DarkMinterClient {
         String normalizedAuthorityId = normalizeRequired(request.getAuthorityId(), "authorityId");
         request.setAuthorityId(normalizedAuthorityId);
         return sendJsonRequest(
-                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + ark))
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + DarkArkIdentifier.normalize(ark)))
                         .header("Content-Type", "application/json")
                         .header(authHeaderName(), normalizedAuthorityId)
                         .PUT(HttpRequest.BodyPublishers.ofString(writeJson(request))),
@@ -69,7 +70,7 @@ public class DarkMinterClient {
 
     public ARKResponse getArk(String ark) {
         return sendJsonRequest(
-                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + ark))
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + DarkArkIdentifier.normalize(ark)))
                         .GET(),
                 ARKResponse.class);
     }

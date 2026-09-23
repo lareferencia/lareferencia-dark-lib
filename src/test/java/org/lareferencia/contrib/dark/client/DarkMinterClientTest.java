@@ -31,7 +31,7 @@ class DarkMinterClientTest {
     void reserveBatchParsesResults() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);
         HttpResponse<String> response = mockResponse(200, """
-                {"results":[{"ark":"ark:/12345/abc","state":"R","client_item_id":"oai:1"}]}
+                {"results":[{"ark":"ark:12345/abc","state":"R","client_item_id":"oai:1"}]}
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
@@ -39,7 +39,7 @@ class DarkMinterClientTest {
         ReserveBatchResponse batchResponse = client.reserveBatch("authority-1", "12345", List.of("oai:1"));
 
         assertEquals(1, batchResponse.getResults().size());
-        assertEquals("ark:/12345/abc", batchResponse.getResults().get(0).getArk());
+        assertEquals("ark:12345/abc", batchResponse.getResults().get(0).getArk());
         assertEquals(DarkRemoteState.RESERVED, batchResponse.getResults().get(0).getState());
     }
 
@@ -60,12 +60,12 @@ class DarkMinterClientTest {
     void getArkParsesState() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);
         HttpResponse<String> response = mockResponse(200, """
-                {"ark":"ark:/12345/abc","state":"P","target":"https://example.org/resource"}
+                {"ark":"ark:12345/abc","state":"P","target":"https://example.org/resource"}
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
-        ARKResponse ark = client.getArk("ark:/12345/abc");
+        ARKResponse ark = client.getArk("ark:12345/abc");
 
         assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
         assertEquals("https://example.org/resource", ark.getTarget());
@@ -81,14 +81,14 @@ class DarkMinterClientTest {
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
-                () -> client.getArk("ark:/12345/missing"));
+                () -> client.getArk("ark:12345/missing"));
         assertEquals(404, error.getStatusCode());
         assertEquals("GET", error.getMethod());
-        assertEquals(URI.create("http://localhost:8001/api/v1/arks/ark:/12345/missing"), error.getUri());
+        assertEquals(URI.create("http://localhost:8001/api/v1/arks/ark:12345/missing"), error.getUri());
         assertEquals(DarkMinterClientException.UNKNOWN_ERROR_CODE, error.getErrorCode());
         assertFalse(error.isRetryable());
         assertEquals("{\"detail\":\"ARK not found\"}", error.getResponseBody());
-        assertEquals("dARK minter error 404 on GET http://localhost:8001/api/v1/arks/ark:/12345/missing: ARK not found", error.getMessage());
+        assertEquals("dARK minter error 404 on GET http://localhost:8001/api/v1/arks/ark:12345/missing: ARK not found", error.getMessage());
     }
 
     @Test
@@ -106,7 +106,7 @@ class DarkMinterClientTest {
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
-                () -> client.getArk("ark:/12345/pending"));
+                () -> client.getArk("ark:12345/pending"));
         assertEquals(503, error.getStatusCode());
         assertEquals("AUTHORIZATION_CHECK_UNAVAILABLE", error.getErrorCode());
         assertTrue(error.isRetryable());
@@ -124,7 +124,7 @@ class DarkMinterClientTest {
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
-                () -> client.getArk("ark:/12345/pending"));
+                () -> client.getArk("ark:12345/pending"));
         assertEquals(DarkMinterClientException.UNKNOWN_ERROR_CODE, error.getErrorCode());
         assertTrue(error.isRetryable());
     }
@@ -140,13 +140,13 @@ class DarkMinterClientTest {
                         "X-DARK-Error-Code", List.of("AUTHORIZATION_CHECK_UNAVAILABLE"),
                         "X-DARK-Retryable", List.of("true")));
         HttpResponse<String> successResponse = mockResponse(200, """
-                {"ark":"ark:/12345/abc","state":"P","target":"https://example.org/resource"}
+                {"ark":"ark:12345/abc","state":"P","target":"https://example.org/resource"}
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(retryableResponse, retryableResponse, successResponse);
 
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
-        ARKResponse ark = client.getArk("ark:/12345/abc");
+        ARKResponse ark = client.getArk("ark:12345/abc");
 
         assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
         verify(httpClient, times(3)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
@@ -167,7 +167,7 @@ class DarkMinterClientTest {
         DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
-                () -> client.getArk("ark:/12345/pending"));
+                () -> client.getArk("ark:12345/pending"));
         assertEquals("AUTHORIZATION_FAILED", error.getErrorCode());
         assertFalse(error.isRetryable());
         assertTrue(error.isSystemic());
@@ -185,7 +185,7 @@ class DarkMinterClientTest {
 
         DarkMinterClientException error = assertThrows(
                 DarkMinterClientException.class,
-                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:/12345/moved"));
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:12345/moved"));
 
         assertEquals(302, error.getStatusCode());
     }
@@ -202,7 +202,7 @@ class DarkMinterClientTest {
 
         DarkMinterClientException error = assertThrows(
                 DarkMinterClientException.class,
-                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:/12345/empty"));
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:12345/empty"));
 
         assertEquals("EMPTY_RESPONSE", error.getErrorCode());
     }

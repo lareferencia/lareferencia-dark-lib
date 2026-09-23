@@ -3,7 +3,6 @@ package org.lareferencia.contrib.dark.services;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.springframework.stereotype.Service;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -11,14 +10,14 @@ import java.util.stream.Collectors;
 
 /**
  * Service for extracting the best URL from OAI record metadata.
- * Priority: DOI > Handle > Longest URL
+ * Priority: DOI > first regular URL > Handle
  */
 @Service
 public class UrlExtractionService {
 
     /**
      * Extracts the best URL from the record's metadata.
-     * Priority: DOI > Handle > Longest URL
+     * Priority: DOI > first regular URL > Handle
      *
      * @param metadata The OAI record metadata
      * @return The best URL found, or empty string if none
@@ -30,8 +29,9 @@ public class UrlExtractionService {
         }
 
         return findDoiUrl(urls)
+                .or(() -> findRegularUrl(urls))
                 .or(() -> findHandleUrl(urls))
-                .orElseGet(() -> findLongestUrl(urls));
+                .orElse("");
     }
 
     public List<String> extractHttpUrls(OAIRecordMetadata metadata) {
@@ -70,10 +70,20 @@ public class UrlExtractionService {
                 .findFirst();
     }
 
-    private String findLongestUrl(List<String> urls) {
+    private Optional<String> findRegularUrl(List<String> urls) {
         return urls.stream()
-                .max(Comparator.comparingInt(String::length))
+                .filter(url -> !isDoiUrl(url))
+                .filter(url -> !isHandleUrl(url))
                 .map(String::trim)
-                .orElse(urls.get(0));
+                .findFirst();
+    }
+
+    private boolean isDoiUrl(String url) {
+        return url.toLowerCase(Locale.ROOT).startsWith("https://doi.org/");
+    }
+
+    private boolean isHandleUrl(String url) {
+        String normalized = url.toLowerCase(Locale.ROOT);
+        return normalized.contains("/handle/") || normalized.startsWith("https://hdl.handle.net/");
     }
 }

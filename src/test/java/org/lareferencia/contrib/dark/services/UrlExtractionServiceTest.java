@@ -22,22 +22,31 @@ class UrlExtractionServiceTest {
     }
 
     @Test
-    @DisplayName("Prefer Handle URL before longest URL")
-    void prefersHandle() throws Exception {
+    @DisplayName("Prefer first regular URL before Handle")
+    void prefersRegularUrlBeforeHandle() throws Exception {
         OAIRecordMetadata metadata = new OAIRecordMetadata("oai:test:2");
         metadata.addFieldOcurrence("dc.identifier", "https://repository.example.org/very/long/path");
         metadata.addFieldOcurrence("dc.identifier", "https://hdl.handle.net/12345/abc");
 
-        assertEquals("https://hdl.handle.net/12345/abc", service.extractBestUrl(metadata));
+        assertEquals("https://repository.example.org/very/long/path", service.extractBestUrl(metadata));
     }
 
     @Test
-    @DisplayName("Fallback to longest URL when DOI and Handle are absent")
-    void fallsBackToLongestUrl() throws Exception {
+    @DisplayName("Prefer first regular URL when DOI and Handle are absent")
+    void prefersFirstRegularUrl() throws Exception {
         OAIRecordMetadata metadata = new OAIRecordMetadata("oai:test:3");
         metadata.addFieldOcurrence("dc.identifier", "https://short.example.org");
         metadata.addFieldOcurrence("dc.identifier", "https://repository.example.org/resources/document/123");
 
-        assertEquals("https://repository.example.org/resources/document/123", service.extractBestUrl(metadata));
+        assertEquals("https://short.example.org", service.extractBestUrl(metadata));
+    }
+
+    @Test
+    @DisplayName("Fallback to Handle when it is the only candidate")
+    void fallsBackToHandle() throws Exception {
+        OAIRecordMetadata metadata = new OAIRecordMetadata("oai:test:4");
+        metadata.addFieldOcurrence("dc.identifier", "https://hdl.handle.net/12345/abc");
+
+        assertEquals("https://hdl.handle.net/12345/abc", service.extractBestUrl(metadata));
     }
 }

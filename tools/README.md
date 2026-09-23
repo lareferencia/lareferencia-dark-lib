@@ -26,7 +26,7 @@ curl -X POST http://localhost:5000/api/v1/arks/batch \
 Stage metadata using the returned ARK:
 
 ```bash
-curl -X PUT http://localhost:5000/api/v1/arks/ark:/99999/example \
+curl -X PUT http://localhost:5000/api/v1/arks/ark:99999/example \
   -H 'Content-Type: application/json' \
   -H 'X-Authority-Id: test-authority' \
   -d '{"authority_id":"test-authority","target":"https://example.org/123","minimal_metadata":{"title":"Demo","authors":["Ada"],"year":2026}}'

@@ -35,8 +35,16 @@ public interface DarkTrackingRepository extends JpaRepository<DarkTrackingRecord
 
     Optional<DarkTrackingRecord> findByIdArkNaanAndIdOaiId(String arkNaan, String oaiId);
 
+    java.util.List<DarkTrackingRecord> findByIdArkNaanAndIdOaiIdIn(String arkNaan, Collection<String> oaiIds);
+
     Page<DarkTrackingRecord> findByIdArkNaanAndArkIsNotNullAndStateIn(
             String arkNaan,
+            Collection<DarkTrackingState> states,
+            Pageable pageable);
+
+    Page<DarkTrackingRecord> findByIdArkNaanAndIdOaiIdInAndArkIsNotNullAndStateIn(
+            String arkNaan,
+            Collection<String> oaiIds,
             Collection<DarkTrackingState> states,
             Pageable pageable);
 

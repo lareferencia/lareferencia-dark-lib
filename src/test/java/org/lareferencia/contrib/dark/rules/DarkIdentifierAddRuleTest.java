@@ -48,7 +48,7 @@ class DarkIdentifierAddRuleTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:1");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/abc");
+        trackingRecord.setArk("ark:12345/abc");
         trackingRecord.setState(DarkTrackingState.PUBLISHED);
 
         when(record.getIdentifier()).thenReturn("oai:test:1");
@@ -68,7 +68,7 @@ class DarkIdentifierAddRuleTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:2");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/def");
+        trackingRecord.setArk("ark:12345/def");
         trackingRecord.setState(DarkTrackingState.DRAFT);
 
         when(record.getIdentifier()).thenReturn("oai:test:2");
@@ -87,7 +87,7 @@ class DarkIdentifierAddRuleTest {
         DarkTrackingRecord trackingRecord = new DarkTrackingRecord();
         trackingRecord.setOaiId("oai:test:3");
         trackingRecord.setArkNaan("12345");
-        trackingRecord.setArk("ark:/12345/ghi");
+        trackingRecord.setArk("ark:12345/ghi");
         trackingRecord.setState(DarkTrackingState.PUBLISHED);
 
         when(record.getIdentifier()).thenReturn("oai:test:3");
@@ -95,13 +95,13 @@ class DarkIdentifierAddRuleTest {
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:3"))).thenReturn(Optional.of(trackingRecord));
 
         OAIRecordMetadata metadata = new OAIRecordMetadata("oai:test:3");
-        metadata.addFieldOcurrence(DarkIdentifierAddRule.DC_IDENTIFIER_DARK, "ark:/12345/ghi");
+        metadata.addFieldOcurrence(DarkIdentifierAddRule.DC_IDENTIFIER_DARK, "ark:12345/ghi");
 
         boolean transformed = rule.transform(snapshotMetadata(), record, metadata);
 
         assertFalse(transformed);
         assertEquals(1, metadata.getFieldOcurrences(DarkIdentifierAddRule.DC_IDENTIFIER_DARK).size());
-        assertEquals("ark:/12345/ghi", metadata.getFieldOcurrences(DarkIdentifierAddRule.DC_IDENTIFIER_DARK).get(0));
+        assertEquals("ark:12345/ghi", metadata.getFieldOcurrences(DarkIdentifierAddRule.DC_IDENTIFIER_DARK).get(0));
     }
 
     private SnapshotMetadata snapshotMetadata() {
