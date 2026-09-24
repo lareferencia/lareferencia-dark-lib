@@ -379,8 +379,12 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     @Override
     public String getStatus() {
         DarkManualProgress progress = getManualProgress();
-        return "phase=" + progress.phase() + " processed=" + progress.processed() + " succeeded="
-                + progress.succeeded() + " skipped=" + progress.skipped() + " failed=" + progress.failed();
+        int totalPages = getTotalPages();
+        int currentPage = Math.max(0, Math.min(getActualPage(), totalPages));
+        int percentage = totalPages <= 0 ? 0 : (int) Math.round((currentPage * 100.0d) / totalPages);
+        return "phase=" + progress.phase() + " page=" + currentPage + "/" + totalPages + " (" + percentage
+                + "%) processed=" + progress.processed() + " succeeded=" + progress.succeeded() + " skipped="
+                + progress.skipped() + " failed=" + progress.failed();
     }
 
     public DarkManualProgress getManualProgress() {

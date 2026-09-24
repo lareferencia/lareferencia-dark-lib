@@ -4,6 +4,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.lareferencia.contrib.dark.client.ARKResponse;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchError;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchResponse;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchResult;
 import org.lareferencia.contrib.dark.client.DarkMinterClient;
 import org.lareferencia.contrib.dark.client.DarkMinterClientException;
 import org.lareferencia.contrib.dark.client.DarkRemoteState;
@@ -21,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -52,6 +56,9 @@ class DarkReconcileWorkerTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(worker, "currentArkNaan", "12345");
+        Network network = new Network();
+        network.setAcronym("TEST");
+        ReflectionTestUtils.setField(worker, "runningContext", new NetworkRunningContext(network));
     }
 
     @Test
@@ -84,9 +91,9 @@ class DarkReconcileWorkerTest {
         response.setArk("ark:12345/abc");
         response.setState(DarkRemoteState.PUBLISHED);
 
-        when(darkMinterClient.getArk("ark:12345/abc")).thenReturn(response);
+        when(darkMinterClient.getArkStatuses(List.of("ark:12345/abc"))).thenReturn(batchStatus(response));
 
-        worker.processItem(record);
+        reconcile(record);
 
         assertEquals(DarkTrackingState.PUBLISHED, record.getState());
         verify(darkTrackingRepository).save(record);
@@ -101,10 +108,10 @@ class DarkReconcileWorkerTest {
         record.setArk("ark:12345/def");
         record.setState(DarkTrackingState.UPDATE);
 
-        when(darkMinterClient.getArk("ark:12345/def"))
-                .thenThrow(new DarkMinterClientException(404, "ARK not found"));
+        when(darkMinterClient.getArkStatuses(List.of("ark:12345/def")))
+                .thenReturn(batchError("ark:12345/def", "not_found", "ARK not found", false));
 
-        worker.processItem(record);
+        reconcile(record);
 
         assertEquals(DarkTrackingState.ERROR, record.getState());
         assertTrue(record.getLastError().contains("\"category\":\"REMOTE_PERMANENT\""));
@@ -121,10 +128,12 @@ class DarkReconcileWorkerTest {
         record.setArk("ark:12345/systemic");
         record.setState(DarkTrackingState.DRAFT);
 
-        when(darkMinterClient.getArk("ark:12345/systemic"))
-                .thenThrow(new DarkMinterClientException(500, "Internal server error"));
+        when(darkMinterClient.getArkStatuses(List.of("ark:12345/systemic")))
+                .thenReturn(batchError("ark:12345/systemic", "blockchain_error", "RPC unavailable", true));
 
-        assertThrows(DarkMinterClientException.class, () -> worker.processItem(record));
+        worker.prePage();
+        worker.processItem(record);
+        assertThrows(DarkMinterClientException.class, worker::postPage);
 
         assertEquals(DarkTrackingState.DRAFT, record.getState());
         verify(darkTrackingRepository, never()).save(record);
@@ -143,13 +152,83 @@ class DarkReconcileWorkerTest {
         response.setArk("ark:12345/reserved");
         response.setState(DarkRemoteState.DRAFT);
 
-        when(darkMinterClient.getArk("ark:12345/reserved")).thenReturn(response);
+        when(darkMinterClient.getArkStatuses(List.of("ark:12345/reserved"))).thenReturn(batchStatus(response));
 
-        worker.processItem(record);
+        reconcile(record);
 
         assertEquals(DarkTrackingState.DRAFT, record.getState());
         assertEquals(null, record.getSourceMetadataHash());
         assertEquals(null, record.getTargetUrl());
         verify(darkTrackingRepository).save(record);
+    }
+
+    @Test
+    @DisplayName("Use one status batch for all records in the page")
+    void reconcilesPageWithOneBatchRequest() {
+        DarkTrackingRecord first = record("oai:test:5", "ark:12345/first");
+        DarkTrackingRecord second = record("oai:test:6", "ark:12345/second");
+        ARKResponse published = new ARKResponse();
+        published.setArk(first.getArk());
+        published.setState(DarkRemoteState.PUBLISHED);
+        ARKResponse draft = new ARKResponse();
+        draft.setArk(second.getArk());
+        draft.setState(DarkRemoteState.DRAFT);
+        ArkStatusBatchResponse response = new ArkStatusBatchResponse();
+        response.setVersion("v1");
+        response.setResults(List.of(status(first.getArk(), published), status(second.getArk(), draft)));
+        when(darkMinterClient.getArkStatuses(List.of(first.getArk(), second.getArk()))).thenReturn(response);
+
+        worker.prePage();
+        worker.processItem(first);
+        worker.processItem(second);
+        worker.postPage();
+
+        verify(darkMinterClient).getArkStatuses(List.of(first.getArk(), second.getArk()));
+        verify(darkMinterClient, never()).getArk(org.mockito.ArgumentMatchers.any());
+        assertEquals(DarkTrackingState.PUBLISHED, first.getState());
+        assertEquals(DarkTrackingState.DRAFT, second.getState());
+    }
+
+    private void reconcile(DarkTrackingRecord record) {
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+    }
+
+    private DarkTrackingRecord record(String oaiId, String ark) {
+        DarkTrackingRecord record = new DarkTrackingRecord();
+        record.setOaiId(oaiId);
+        record.setArkNaan("12345");
+        record.setArk(ark);
+        record.setState(DarkTrackingState.DRAFT);
+        return record;
+    }
+
+    private ArkStatusBatchResponse batchStatus(ARKResponse status) {
+        ArkStatusBatchResponse response = new ArkStatusBatchResponse();
+        response.setVersion("v1");
+        response.setResults(List.of(status(status.getArk(), status)));
+        return response;
+    }
+
+    private ArkStatusBatchResponse batchError(String ark, String code, String message, boolean retryable) {
+        ArkStatusBatchError error = new ArkStatusBatchError();
+        error.setCode(code);
+        error.setMessage(message);
+        error.setRetryable(retryable);
+        ArkStatusBatchResult result = new ArkStatusBatchResult();
+        result.setArk(ark);
+        result.setError(error);
+        ArkStatusBatchResponse response = new ArkStatusBatchResponse();
+        response.setVersion("v1");
+        response.setResults(List.of(result));
+        return response;
+    }
+
+    private ArkStatusBatchResult status(String ark, ARKResponse status) {
+        ArkStatusBatchResult result = new ArkStatusBatchResult();
+        result.setArk(ark);
+        result.setStatus(status);
+        return result;
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.mockito.ArgumentCaptor;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -69,6 +70,26 @@ class DarkMinterClientTest {
 
         assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
         assertEquals("https://example.org/resource", ark.getTarget());
+    }
+
+    @Test
+    @DisplayName("Status batch posts canonical ARKs to the v1 endpoint")
+    void statusBatchUsesV1EndpointAndCanonicalArk() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mockResponse(200, """
+                {"version":"v1","results":[{"ark":"ark:12345/abc","status":{"ark":"ark:12345/abc","state":"P"}}]}
+                """);
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        ArkStatusBatchResponse batch = client.getArkStatuses(List.of("ark:/12345/abc"));
+
+        ArgumentCaptor<HttpRequest> request = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient).send(request.capture(), any(HttpResponse.BodyHandler.class));
+        assertEquals(URI.create("http://localhost:8001/api/v1/arks/status/batch"), request.getValue().uri());
+        assertEquals("POST", request.getValue().method());
+        assertEquals("ark:12345/abc", batch.getResults().get(0).getArk());
+        assertEquals(DarkRemoteState.PUBLISHED, batch.getResults().get(0).getStatus().getState());
     }
 
     @Test

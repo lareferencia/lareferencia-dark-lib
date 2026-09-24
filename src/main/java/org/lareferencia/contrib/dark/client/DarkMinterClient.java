@@ -75,6 +75,18 @@ public class DarkMinterClient {
                 ARKResponse.class);
     }
 
+    public ArkStatusBatchResponse getArkStatuses(List<String> arks) {
+        if (arks == null || arks.isEmpty() || arks.size() > 100) {
+            throw new IllegalArgumentException("dARK status batch requires between 1 and 100 ARKs");
+        }
+        ArkStatusBatchRequest request = ArkStatusBatchRequest.fromArks(arks);
+        return sendJsonRequest(
+                HttpRequest.newBuilder(buildUri("/api/v1/arks/status/batch"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(writeJson(request))),
+                ArkStatusBatchResponse.class);
+    }
+
     private <T> T sendJsonRequest(HttpRequest.Builder builder, Class<T> responseType) {
         HttpRequest request = builder.timeout(REQUEST_TIMEOUT).build();
         int maxRetries = properties.getMinter().getRetry().getMaxRetries();

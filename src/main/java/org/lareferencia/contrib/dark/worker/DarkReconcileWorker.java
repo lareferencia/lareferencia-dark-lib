@@ -3,6 +3,9 @@ package org.lareferencia.contrib.dark.worker;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.client.ARKResponse;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchError;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchResponse;
+import org.lareferencia.contrib.dark.client.ArkStatusBatchResult;
 import org.lareferencia.contrib.dark.client.DarkMinterClient;
 import org.lareferencia.contrib.dark.client.DarkMinterClientException;
 import org.lareferencia.contrib.dark.client.DarkRemoteState;
@@ -20,11 +23,15 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, NetworkRunningContext> {
 
     private static final Logger logger = LogManager.getLogger(DarkReconcileWorker.class);
+    private static final int MINTER_STATUS_BATCH_LIMIT = 100;
 
     @Autowired
     private DarkTrackingRepository darkTrackingRepository;
@@ -61,10 +68,11 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
     private LocalDateTime runStartedAt;
     private Collection<DarkTrackingState> reconcileStates;
     private List<String> selectedOaiIds = List.of();
+    private final List<DarkTrackingRecord> pageRecords = new ArrayList<>();
 
     @Override
     protected void preRun() {
-        setPageSize(darkProperties.getReconcilePageSize());
+        setPageSize(Math.min(darkProperties.getReconcilePageSize(), MINTER_STATUS_BATCH_LIMIT));
         currentArkNaan = darkNetworkSettingsResolver.resolveArkNaan(runningContext.getNetwork());
         resetRunCounters();
         runStartedAt = LocalDateTime.now();
@@ -95,6 +103,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     public void prePage() {
+        pageRecords.clear();
         pageProcessed = 0;
         pageSkippedWithoutArk = 0;
         pagePublished = 0;
@@ -116,34 +125,11 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
             return;
         }
 
-        try {
-            ARKResponse response = darkMinterClient.getArk(record.getArk());
-            DarkRemoteState remoteState = response.getState();
-
-            record.setState(remoteState.toTrackingState());
-            record.setLastReconciledAt(LocalDateTime.now());
-            record.setLastError(null);
-
-            if (remoteState == DarkRemoteState.PUBLISHED) {
-                if (record.getPublishedAt() == null) {
-                    record.setPublishedAt(LocalDateTime.now());
-                }
-            }
-
-            darkTrackingRepository.save(record);
-            incrementStateCounters(remoteState);
-        } catch (DarkMinterClientException e) {
-            if (e.isRetryable() || e.isSystemic()) {
-                throw e;
-            }
-            logger.warn("Failed reconciling ARK {}: {}", record.getArk(), e.getMessage());
-            record.setState(DarkTrackingState.ERROR);
-            record.setLastError(darkErrorCodec.encode(e, "READ_REMOTE_STATE"));
-            record.setLastReconciledAt(LocalDateTime.now());
-            darkTrackingRepository.save(record);
-            pageErrors++;
-            runErrors++;
-        }
+        // Loaded historical rows may still use ark:/NAAN/name until Flyway has
+        // applied the normalization migration. Keep the outbound batch and the
+        // persisted tracking value canonical.
+        record.setArk(record.getArk());
+        pageRecords.add(record);
     }
 
     @Override
@@ -153,6 +139,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     public void postPage() {
+        reconcilePageRecords();
         logger.debug(
                 "DARK reconcile page summary for network {} | processed={} | skippedWithoutArk={} | published={} | reserved={} | draft={} | update={} | tombstone={} | errors={}",
                 runningContext.getNetwork().getAcronym(),
@@ -164,6 +151,74 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
                 pageUpdated,
                 pageTombstone,
                 pageErrors);
+    }
+
+    private void reconcilePageRecords() {
+        for (int start = 0; start < pageRecords.size(); start += MINTER_STATUS_BATCH_LIMIT) {
+            List<DarkTrackingRecord> records = pageRecords.subList(
+                    start, Math.min(start + MINTER_STATUS_BATCH_LIMIT, pageRecords.size()));
+            ArkStatusBatchResponse response = darkMinterClient.getArkStatuses(
+                    records.stream().map(DarkTrackingRecord::getArk).toList());
+            validateBatchResponse(response, records);
+            for (int index = 0; index < records.size(); index++) {
+                applyBatchResult(records.get(index), response.getResults().get(index));
+            }
+        }
+    }
+
+    private void validateBatchResponse(ArkStatusBatchResponse response, List<DarkTrackingRecord> records) {
+        if (response == null || !"v1".equals(response.getVersion()) || response.getResults() == null
+                || response.getResults().size() != records.size()) {
+            throw invalidBatchResponse("Expected version v1 and one result per requested ARK");
+        }
+        for (int index = 0; index < records.size(); index++) {
+            ArkStatusBatchResult result = response.getResults().get(index);
+            if (result == null || !Objects.equals(records.get(index).getArk(), result.getArk())
+                    || (result.getStatus() == null) == (result.getError() == null)) {
+                throw invalidBatchResponse("Malformed result at index " + index);
+            }
+            if (result.getStatus() != null && result.getStatus().getState() == null) {
+                throw invalidBatchResponse("Missing remote state at index " + index);
+            }
+        }
+    }
+
+    private void applyBatchResult(DarkTrackingRecord record, ArkStatusBatchResult result) {
+        if (result.getStatus() != null) {
+            applyRemoteStatus(record, result.getStatus());
+            return;
+        }
+
+        ArkStatusBatchError error = result.getError();
+        if (error.isRetryable()) {
+            throw new DarkMinterClientException(503, error.getCode(), true,
+                    "Retryable batch status error for " + record.getArk() + ": " + error.getMessage());
+        }
+
+        logger.warn("Failed reconciling ARK {}: {}", record.getArk(), error.getMessage());
+        record.setState(DarkTrackingState.ERROR);
+        record.setLastError(darkErrorCodec.encode("REMOTE_PERMANENT", error.getCode(), "READ_REMOTE_STATE",
+                null, false, error.getMessage(), Map.of("source", "status/batch")));
+        record.setLastReconciledAt(LocalDateTime.now());
+        darkTrackingRepository.save(record);
+        pageErrors++;
+        runErrors++;
+    }
+
+    private void applyRemoteStatus(DarkTrackingRecord record, ARKResponse response) {
+        DarkRemoteState remoteState = response.getState();
+        record.setState(remoteState.toTrackingState());
+        record.setLastReconciledAt(LocalDateTime.now());
+        record.setLastError(null);
+        if (remoteState == DarkRemoteState.PUBLISHED && record.getPublishedAt() == null) {
+            record.setPublishedAt(LocalDateTime.now());
+        }
+        darkTrackingRepository.save(record);
+        incrementStateCounters(remoteState);
+    }
+
+    private DarkMinterClientException invalidBatchResponse(String message) {
+        return new DarkMinterClientException(502, "INVALID_BATCH_RESPONSE", true, message);
     }
 
     @Override
@@ -233,7 +288,9 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
     @Override
     public String getStatus() {
         DarkManualProgress progress = getManualProgress();
-        return "phase=" + progress.phase() + " processed=" + progress.processed() + " succeeded="
+        String total = runInitialPending > 0 ? "/" + runInitialPending + " ("
+                + Math.min(100, (int) Math.round((progress.processed() * 100.0d) / runInitialPending)) + "%)" : "";
+        return "phase=" + progress.phase() + " processed=" + progress.processed() + total + " succeeded="
                 + progress.succeeded() + " skipped=" + progress.skipped() + " failed=" + progress.failed();
     }
 
