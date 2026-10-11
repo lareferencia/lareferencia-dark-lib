@@ -28,6 +28,71 @@ import static org.mockito.Mockito.when;
 class DarkMinterClientTest {
 
     @Test
+    void dark2SignsTheExactSentBytesAndEachSendHasANewNonce() throws Exception {
+        var pair = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+        String keyId = org.lareferencia.contrib.dark.services.DarkRequestSigner.sha256(
+                org.lareferencia.contrib.dark.services.DarkKeyStorage.rawPublicKey(pair.getPublic()));
+        var credentials = mock(org.lareferencia.contrib.dark.services.DarkCredentialService.class);
+        when(credentials.headers(any(), any(), any(), any())).thenAnswer(call ->
+                org.lareferencia.contrib.dark.services.DarkRequestSigner.sign(pair.getPrivate(), keyId,
+                        call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3),
+                        java.time.Instant.now().getEpochSecond(), java.util.UUID.randomUUID()));
+        var properties = properties(); properties.getMinter().setBaseUrl("https://minter.example.org/prefix");
+        properties.getMinter().getAuthentication().setMode("dark2");
+        properties.getMinter().getAuthentication().setRegistrationStatus("enabled");
+        var http = mock(HttpClient.class);
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenAnswer(call -> mockResponse(200, "{\"results\":[],\"errors\":[]}"));
+        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
+        client.reserveBatch("authority-1", "12345", List.of("oai:áñ:1"));
+        client.reserveBatch("authority-1", "12345", List.of("oai:áñ:1"));
+        ArgumentCaptor<HttpRequest> requests = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(http, times(2)).send(requests.capture(), any(HttpResponse.BodyHandler.class));
+        var first = requests.getAllValues().get(0);
+        assertEquals("authority-1", first.headers().firstValue("X-Authority-Id").orElseThrow());
+        assertEquals(first.headers().firstValue("X-DARK-Authority-Id"), first.headers().firstValue("X-Authority-Id"));
+        assertFalse(first.headers().firstValue("X-DARK-Nonce").equals(requests.getAllValues().get(1).headers().firstValue("X-DARK-Nonce")));
+        var subscriber = HttpResponse.BodySubscribers.ofByteArray();
+        first.bodyPublisher().orElseThrow().subscribe(new java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer>() {
+            public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) { subscriber.onSubscribe(subscription); }
+            public void onNext(java.nio.ByteBuffer item) { subscriber.onNext(List.of(item)); }
+            public void onError(Throwable error) { subscriber.onError(error); }
+            public void onComplete() { subscriber.onComplete(); }
+        });
+        byte[] sent = subscriber.getBody().toCompletableFuture().get();
+        assertEquals(org.lareferencia.contrib.dark.services.DarkRequestSigner.sha256(sent), first.headers().firstValue("X-DARK-Content-SHA256").orElseThrow());
+        assertTrue(new String(sent, java.nio.charset.StandardCharsets.UTF_8).contains("oai:áñ:1"));
+        String canonical = String.join("\n", "DARK2", "POST", "/prefix/api/v1/arks/batch", "authority-1", keyId,
+                first.headers().firstValue("X-DARK-Timestamp").orElseThrow(), first.headers().firstValue("X-DARK-Nonce").orElseThrow(),
+                first.headers().firstValue("X-DARK-Content-SHA256").orElseThrow());
+        var verifier = java.security.Signature.getInstance("Ed25519"); verifier.initVerify(pair.getPublic());
+        verifier.update(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertTrue(verifier.verify(java.util.Base64.getDecoder().decode(first.headers().firstValue("X-DARK-Signature").orElseThrow())));
+    }
+
+    @Test
+    void dark2DoesNotRetryLostModificationResponsesAndStillAllowsPausedReads() throws Exception {
+        var properties = properties(); properties.getMinter().getRetry().setMaxRetries(5);
+        properties.getMinter().getAuthentication().setMode("dark2");
+        properties.getMinter().getAuthentication().setRegistrationStatus("enabled");
+        var credentials = mock(org.lareferencia.contrib.dark.services.DarkCredentialService.class);
+        when(credentials.headers(any(), any(), any(), any())).thenReturn(Map.of());
+        var http = mock(HttpClient.class);
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenThrow(new java.io.IOException("response lost"));
+        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
+        assertThrows(DarkMinterClientException.class, () -> client.reserveBatch("authority-1", "12345", List.of("oai:1")));
+        verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        properties.getMinter().getAuthentication().setRegistrationStatus("pending_registration");
+        assertEquals("DARK_AUTHENTICATION_PAUSED", assertThrows(DarkMinterClientException.class,
+                () -> client.reserveBatch("authority-1", "12345", List.of("oai:1"))).getErrorCode());
+        verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        var readResponse = mockResponse(200, "{\"version\":\"v1\",\"results\":[]}");
+        org.mockito.Mockito.doReturn(readResponse).when(http).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        client.getArkStatuses(List.of("ark:12345/abc"));
+        verify(credentials, times(1)).headers(any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("Reserve batch uses authority header and parses results")
     void reserveBatchParsesResults() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);

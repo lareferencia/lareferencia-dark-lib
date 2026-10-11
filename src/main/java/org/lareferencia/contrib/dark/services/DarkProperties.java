@@ -22,12 +22,31 @@ public class DarkProperties {
     private Reconcile reconcile = new Reconcile();
     private String authorityId;
     private String authHeaderName = "X-Authority-Id";
+    @org.springframework.beans.factory.annotation.Value("${store.basepath:/tmp/data}")
+    private String storeBasePath = "/tmp/data";
+
+    /** Key storage is derived from the application's existing metadata store. */
+    public String getKeyStorageRoot() {
+        return java.nio.file.Path.of(storeBasePath).toAbsolutePath().normalize().resolve("keys").toString();
+    }
 
     /** Applies the installation configuration loaded from the database. */
     public synchronized void applyRuntimeConfiguration(ObjectNode client, ObjectNode runtimeStage, ObjectNode runtimeReconcile) {
         if (client.has("baseUrl")) minter.setBaseUrl(client.path("baseUrl").asText());
         if (client.has("authorityId")) setAuthorityId(client.path("authorityId").isNull() ? null : client.path("authorityId").asText());
         if (client.has("authHeaderName")) setAuthHeaderName(client.path("authHeaderName").asText());
+        if (client.path("authentication").isObject()) {
+            ObjectNode auth = (ObjectNode) client.path("authentication");
+            Authentication settings = new Authentication();
+            settings.setMode(auth.path("mode").asText("legacy"));
+            settings.setStorageRoot(getKeyStorageRoot());
+            settings.setCredentialId(auth.path("credentialId").asText(null));
+            settings.setRegistrationStatus(auth.path("registrationStatus").asText("not_configured"));
+            settings.setAuthorityId(auth.path("authorityId").asText(null));
+            settings.setBaseUrl(auth.path("baseUrl").asText(null));
+            settings.setKeyId(auth.path("keyId").asText(null));
+            minter.setAuthentication(settings);
+        }
         if (client.has("maxRetries")) minter.getRetry().setMaxRetries(client.path("maxRetries").asInt());
         if (client.has("backoffSeconds") && client.path("backoffSeconds").isArray()) {
             List<Long> values = new ArrayList<>(); client.path("backoffSeconds").forEach(item -> values.add(item.asLong()));
@@ -62,6 +81,7 @@ public class DarkProperties {
     public static class Minter {
         private String baseUrl = "http://localhost:8001";
         private Retry retry = new Retry();
+        private Authentication authentication = new Authentication();
 
         public String getBaseUrl() {
             return normalize(baseUrl);
@@ -77,6 +97,18 @@ public class DarkProperties {
             }
             return retry;
         }
+    }
+
+    @Getter
+    @Setter
+    public static class Authentication {
+        private String mode = "legacy";
+        private String storageRoot;
+        private String credentialId;
+        private String registrationStatus = "not_configured";
+        private String authorityId;
+        private String baseUrl;
+        private String keyId;
     }
 
     @Getter

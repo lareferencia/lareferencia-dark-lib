@@ -62,6 +62,21 @@ class DarkReconcileWorkerTest {
     }
 
     @Test
+    void preservesUnknownPayloadOutcomeWhenRemoteStateBecomesPublished() {
+        var record = new DarkTrackingRecord(); record.setArkNaan("12345"); record.setOaiId("oai:test:unknown");
+        record.setArk("ark:12345/unknown"); record.setState(DarkTrackingState.UPDATE);
+        record.setStagePayloadHash("last-confirmed-hash");
+        String error = new org.lareferencia.contrib.dark.services.DarkErrorCodec().encode(
+                new DarkMinterClientException(503, DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true, "response lost"), "STAGE");
+        record.setLastError(error);
+        var remote = new ARKResponse(); remote.setArk(record.getArk()); remote.setState(DarkRemoteState.PUBLISHED);
+        ReflectionTestUtils.invokeMethod(worker, "applyRemoteStatus", record, remote);
+        assertEquals(DarkTrackingState.PUBLISHED, record.getState());
+        assertEquals(error, record.getLastError());
+        assertEquals("last-confirmed-hash", record.getStagePayloadHash());
+    }
+
+    @Test
     @DisplayName("Include reserved records in reconciliation states")
     void includesReservedRecordsInReconciliationStates() {
         DarkProperties properties = new DarkProperties();

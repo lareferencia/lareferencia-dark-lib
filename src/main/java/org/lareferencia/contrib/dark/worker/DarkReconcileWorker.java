@@ -197,8 +197,9 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
         logger.warn("Failed reconciling ARK {}: {}", record.getArk(), error.getMessage());
         record.setState(DarkTrackingState.ERROR);
-        record.setLastError(darkErrorCodec.encode("REMOTE_PERMANENT", error.getCode(), "READ_REMOTE_STATE",
-                null, false, error.getMessage(), Map.of("source", "status/batch")));
+        if (!darkErrorCodec.hasUnknownOutcome(record.getLastError()))
+            record.setLastError(darkErrorCodec.encode("REMOTE_PERMANENT", error.getCode(), "READ_REMOTE_STATE",
+                    null, false, error.getMessage(), Map.of("source", "status/batch")));
         record.setLastReconciledAt(LocalDateTime.now());
         darkTrackingRepository.save(record);
         pageErrors++;
@@ -209,7 +210,8 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
         DarkRemoteState remoteState = response.getState();
         record.setState(remoteState.toTrackingState());
         record.setLastReconciledAt(LocalDateTime.now());
-        record.setLastError(null);
+        // A state read cannot prove which metadata payload was accepted after a lost PUT response.
+        if (!darkErrorCodec.hasUnknownOutcome(record.getLastError())) record.setLastError(null);
         if (remoteState == DarkRemoteState.PUBLISHED && record.getPublishedAt() == null) {
             record.setPublishedAt(LocalDateTime.now());
         }

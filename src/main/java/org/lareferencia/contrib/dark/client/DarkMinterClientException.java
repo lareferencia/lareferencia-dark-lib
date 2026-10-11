@@ -5,6 +5,7 @@ import java.net.URI;
 public class DarkMinterClientException extends RuntimeException {
 
     public static final String UNKNOWN_ERROR_CODE = "UNKNOWN";
+    public static final String MODIFICATION_OUTCOME_UNKNOWN = "MODIFICATION_OUTCOME_UNKNOWN";
 
     private final int statusCode;
     private final String method;

@@ -5,6 +5,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.services.DarkProperties;
 import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
+import org.lareferencia.contrib.dark.services.DarkCredentialService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,42 +31,88 @@ public class DarkMinterClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final DarkProperties properties;
+    private final DarkCredentialService credentials;
 
     @Autowired
-    public DarkMinterClient(DarkProperties properties) {
+    public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials) {
         this(HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(REQUEST_TIMEOUT)
-                .build(), new ObjectMapper(), properties);
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build(), new ObjectMapper(), properties, credentials);
     }
 
     DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties) {
+        this(httpClient, objectMapper, properties, null);
+    }
+
+    DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties, DarkCredentialService credentials) {
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.credentials = credentials;
     }
 
     public ReserveBatchResponse reserveBatch(String authorityId, String naan, List<String> clientItemIds) {
         String normalizedAuthorityId = normalizeRequired(authorityId, "authorityId");
         String normalizedNaan = normalizeRequired(naan, "naan");
         ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(normalizedAuthorityId, normalizedNaan, clientItemIds);
-        return sendJsonRequest(
-                HttpRequest.newBuilder(buildUri("/api/v1/arks/batch"))
-                        .header("Content-Type", "application/json")
-                        .header(authHeaderName(), normalizedAuthorityId)
-                        .POST(HttpRequest.BodyPublishers.ofString(writeJson(request))),
-                ReserveBatchResponse.class);
+        return sendModification("POST", "/api/v1/arks/batch", normalizedAuthorityId, request, ReserveBatchResponse.class);
     }
 
     public ARKResponse stageArk(String ark, StageArkRequest request) {
         String normalizedAuthorityId = normalizeRequired(request.getAuthorityId(), "authorityId");
         request.setAuthorityId(normalizedAuthorityId);
-        return sendJsonRequest(
-                HttpRequest.newBuilder(buildUri("/api/v1/arks/" + DarkArkIdentifier.normalize(ark)))
-                        .header("Content-Type", "application/json")
-                        .header(authHeaderName(), normalizedAuthorityId)
-                        .PUT(HttpRequest.BodyPublishers.ofString(writeJson(request))),
-                ARKResponse.class);
+        return sendModification("PUT", "/api/v1/arks/" + DarkArkIdentifier.normalize(ark), normalizedAuthorityId, request, ARKResponse.class);
+    }
+
+    private <T> T sendModification(String method, String path, String authority, Object payload, Class<T> responseType) {
+        synchronized (properties) {
+            var auth = properties.getMinter().getAuthentication();
+            requireModificationsEnabled();
+            URI uri = buildUri(path);
+            byte[] body;
+            try { body = objectMapper.writeValueAsBytes(payload); }
+            catch (IOException e) { throw new DarkMinterClientException(500, "Unable to serialize dARK request", e); }
+            HttpRequest.Builder builder = HttpRequest.newBuilder(uri).timeout(REQUEST_TIMEOUT)
+                    .header("Content-Type", "application/json").header("Accept", "application/json")
+                    .method(method, HttpRequest.BodyPublishers.ofByteArray(body));
+            if ("dark2".equals(auth.getMode())) {
+                if (credentials == null) throw new DarkMinterClientException(503, "DARK_CREDENTIAL_UNAVAILABLE", false, "Signing service unavailable");
+                credentials.headers(method, uri, authority, body).forEach(builder::header);
+                // Minters with signature verification disabled use this explicit identity header.
+                builder.header("X-Authority-Id", authority);
+                // One send only. A lost response requires business reconciliation, not another signed attempt.
+                try {
+                    return sendJsonRequestOnce(builder.build(), responseType);
+                } catch (DarkMinterClientException e) {
+                    if (e.isRetryable() || "CLIENT_INTERRUPTED".equals(e.getErrorCode())
+                            || "SIGNED_REQUEST_REPLAY".equals(e.getErrorCode())) {
+                        throw new DarkMinterClientException(e.getStatusCode(), method, uri,
+                                DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true,
+                                "Modification outcome is unknown; reconcile before resending (" + e.getErrorCode() + ")",
+                                e.getResponseBody(), e);
+                    }
+                    throw e;
+                }
+            }
+            builder.header(authHeaderName(), authority);
+            if (!"legacy".equals(auth.getMode()))
+                throw new DarkMinterClientException(503, "DARK_AUTHENTICATION_MODE_INVALID", false, "Unsupported authentication mode");
+            return sendJsonRequest(builder, responseType);
+        }
+    }
+
+    public void requireModificationsEnabled() {
+        synchronized (properties) {
+            var auth = properties.getMinter().getAuthentication();
+            if ("pending_registration".equals(auth.getRegistrationStatus())
+                    || ("dark2".equals(auth.getMode()) && !"enabled".equals(auth.getRegistrationStatus())))
+                throw new DarkMinterClientException(503, "DARK_AUTHENTICATION_PAUSED", false,
+                        "Minter modifications are paused pending public key registration");
+            if (!java.util.Set.of("legacy", "dark2").contains(auth.getMode()))
+                throw new DarkMinterClientException(503, "DARK_AUTHENTICATION_MODE_INVALID", false, "Unsupported authentication mode");
+        }
     }
 
     public ARKResponse getArk(String ark) {
@@ -130,7 +177,8 @@ public class DarkMinterClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String errorMessage = extractErrorMessage(body);
                 String errorCode = extractErrorCode(response);
-                boolean retryable = extractRetryable(response);
+                boolean retryable = extractRetryable(response) && !errorCode.startsWith("SIGNED_")
+                        && !errorCode.equals("AUTHORITY_MISMATCH");
                 logger.warn("dARK minter rejected request [{} {}] with status {}, errorCode={}, retryable={} and body {}",
                         request.method(), request.uri(), response.statusCode(), errorCode, retryable, body);
                 throw new DarkMinterClientException(

@@ -76,3 +76,45 @@ See [LICENSE.txt](../LICENSE.txt) for complete terms.
 
 **LA Referencia** - Red Latinoamericana y de España de Ciencia Abierta  
 Part of the LA Referencia Platform 5.0.0-rc3
+
+
+## Autenticación DARK2 y gestión de claves
+
+El módulo dARK del Admin del cosechador integra conexión, claves y activación en **Configuración del minter**. El administrador del cosechador y el del minter pueden ser personas distintas.
+
+1. Guardar la URL HTTP o HTTPS del minter y el modo DARK2. El ID de autoridad puede quedar vacío durante el registro inicial.
+2. Generar el par Ed25519, copiar la pública o descargar `dark-minter.pub`. La privada permanece en el servidor.
+3. Enviar esa pública al administrador del minter para que registre la instalación y proporcione el ID de autoridad. La huella DARK2 está disponible en «Detalles de la clave».
+4. Introducir y guardar el ID recibido. El par generado se conserva.
+5. Pulsar **Confirmar registro y reanudar** después de recibir la confirmación del administrador del minter para esa clave, autoridad y destino. Esto habilita los envíos; no representa una prueba remota de la firma.
+
+Los parámetros operativos se agrupan en **Configuración avanzada**.
+
+Regenerar reemplaza el único par vigente y pausa las reservas y los envíos de metadatos hasta completar nuevamente el registro externo. La pausa se guarda en la base de datos y sobrevive a reinicios. Las lecturas y consultas de estado continúan disponibles. Cambiar la autoridad o el destino también exige confirmar de nuevo el registro correspondiente.
+
+### Almacenamiento del servidor
+
+Las claves se guardan automáticamente en `${store.basepath}/keys`, usando la misma propiedad `store.basepath` que el harvester emplea para el catálogo y los metadatos. La interfaz muestra una nota breve indicando que se almacenan en el directorio `keys` del almacenamiento de la aplicación. La ubicación es fija y la API rechaza cambios.
+
+```properties
+# Almacenamiento existente del harvester. Las claves quedarán en /srv/lareferencia/data/keys.
+store.basepath=/srv/lareferencia/data
+```
+
+No hay una propiedad independiente para la ubicación de las claves. Si ya se habían generado con la ubicación anterior, trasladar su directorio de credencial (conservando el ID y los permisos) al nuevo subdirectorio `keys` antes de reanudar. El sistema mantiene la referencia vigente y señala archivos no disponibles si todavía no se han trasladado.
+
+El directorio de claves debe tener permisos 0700. El backend crea cada privada PKCS#8 con permisos 0600 y exporta la pública como OpenSSH Ed25519 y raw base64. La huella DARK2 es SHA-256 hexadecimal de los 32 bytes públicos raw; no es la huella de `ssh-keygen -lf`.
+
+Esta implementación usa permisos POSIX y está prevista para una única instancia administrativa/firmante. Mantener el volumen fuera de las rutas HTTP públicas y de los repositorios, incluirlo en las copias de seguridad junto con la base de datos y conservarlo al recrear contenedores. No se genera una clave nueva automáticamente si falta un archivo. Las credenciales anteriores pueden permanecer como archivos de recuperación; la aplicación solo utiliza la referencia vigente.
+
+### Peticiones y recuperación
+
+Las reservas batch y los PUT de metadatos llevan firma DARK2. El cuerpo JSON se serializa una sola vez y se firma el buffer enviado. Las modificaciones DARK2 no se reintentan en el cliente HTTP; las lecturas conservan el backoff configurado. El proxy debe preservar path y query y el reloj del servidor debe estar sincronizado.
+
+Una respuesta perdida de stage se registra como `MODIFICATION_OUTCOME_UNKNOWN`. Ese registro queda excluido de nuevos envíos automáticos hasta una revisión y un envío manual explícitos; leer el estado remoto no confirma qué payload se aceptó. La interfaz advierte antes del envío manual. Las reservas batch conservan los OAI IDs como `client_item_id` para recuperar las reservas activas en una ejecución posterior.
+
+La gestión está disponible bajo `/api/v5/dark/authentication`, con acceso ADMIN. Ningún endpoint devuelve la privada. La implementación se valida offline mediante el vector de la guía DARK2; el despliegue debe completar una operación firmada en su minter autorizado para comprobar la integración real.
+
+DARK2 admite HTTP y HTTPS. Si se utiliza HTTP, la interfaz muestra una advertencia: la firma autentica la petición, pero el transporte no cifra los datos. Se recomienda HTTPS.
+
+Las modificaciones DARK2 envían los seis encabezados de firma y también `X-Authority-Id` con exactamente la misma autoridad. Esto permite la identidad explícita que el minter exige cuando su verificación de firmas está desactivada. En el servidor, `MINTER_SIGNED_AUTH_ENABLED` determina si se verifica la firma.

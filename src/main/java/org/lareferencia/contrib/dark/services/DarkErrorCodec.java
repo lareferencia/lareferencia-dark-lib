@@ -44,6 +44,14 @@ public class DarkErrorCodec {
         return encode(category, code, phase, httpStatus, retryable, error.getMessage(), Map.of());
     }
 
+    public boolean hasUnknownOutcome(String error) {
+        if (error == null || error.isBlank()) return false;
+        try {
+            var value = objectMapper.readTree(error);
+            return value != null && DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN.equals(value.path("code").asText());
+        } catch (JsonProcessingException e) { return false; }
+    }
+
     public String encode(String category, String code, String phase, Integer httpStatus,
             boolean retryable, String message, Map<String, Object> details) {
         Map<String, Object> payload = new LinkedHashMap<>();

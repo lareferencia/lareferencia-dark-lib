@@ -112,6 +112,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
     @Override
     protected void preRun() {
+        darkMinterClient.requireModificationsEnabled();
         validateConfiguration();
         setPageSize(darkProperties.getStagePageSize());
         resetRunCounters();
@@ -200,6 +201,15 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
         Optional<DarkTrackingRecord> existing = darkTrackingRepository.findById(trackingId(record.getIdentifier()));
         DarkTrackingRecord existingRecord = existing.orElse(null);
+
+        if (!isManualCommand() && existingRecord != null && existingRecord.hasArk()
+                && darkErrorCodec.hasUnknownOutcome(existingRecord.getLastError())) {
+            logWarn("DARK stage requires an explicit review before resending record " + record.getIdentifier()
+                    + " because the previous modification outcome is unknown");
+            pageSkippedUnchanged++;
+            runSkippedUnchanged++;
+            return;
+        }
 
         if (isManualCommand() && (existingRecord == null || !existingRecord.hasArk())) {
             persistError(record.getIdentifier(), null, record.getOriginalMetadataHash(),
@@ -413,6 +423,11 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                         currentArkNaan,
                         chunk.stream().map(DarkStageCandidate::getOaiId).toList());
             } catch (DarkMinterClientException e) {
+                if (DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN.equals(e.getErrorCode())) {
+                    // Stable OAI IDs are retained for recovery through the minter's active batch reservations.
+                    for (DarkStageCandidate candidate : chunk)
+                        persistReservationError(candidate, candidate.getOaiId(), darkErrorCodec.encode(e, "RESERVE"));
+                }
                 handleReservationMinterFailure(e);
                 break;
             }
@@ -520,8 +535,10 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 candidates.size(), runningContext.getNetwork().getAcronym());
         for (DarkStageCandidate candidate : candidates) {
             String ark = candidate.getArk();
+            boolean stageSubmitted = false;
             try {
-                if (isManualCommand() && !manualStageAllowed(candidate)) {
+                if ((isManualCommand() || "dark2".equals(darkProperties.getMinter().getAuthentication().getMode()))
+                        && !manualStageAllowed(candidate)) {
                     continue;
                 }
                 StageArkRequest request = StageArkRequest.builder()
@@ -535,9 +552,14 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
                 logger.debug("DARK stage sending metadata for record {} to ARK {}", candidate.getOaiId(), ark);
                 ARKResponse response = darkMinterClient.stageArk(ark, request);
+                stageSubmitted = true;
                 validateStageResponse(candidate, response);
                 persistSuccess(candidate, response);
             } catch (DarkMinterClientException e) {
+                if (stageSubmitted && "dark2".equals(darkProperties.getMinter().getAuthentication().getMode())) {
+                    e = new DarkMinterClientException(e.getStatusCode(), DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN,
+                            true, "Minter response could not confirm the submitted stage; reconcile before resending");
+                }
                 if (e.isRetryable()) {
                     logError("DARK stage stopping because dARK minter returned a retryable error while staging record "
                             + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
@@ -576,6 +598,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
      */
     private boolean manualStageAllowed(DarkStageCandidate candidate) {
         ARKResponse remote = darkMinterClient.getArk(candidate.getArk());
+        if (remote == null || remote.getState() == null)
+            throw new DarkMinterClientException(502, "INVALID_READ_RESPONSE", true, "Minter preflight response is missing state");
         DarkRemoteState remoteState = remote.getState();
         if (remoteState == DarkRemoteState.RESERVED || remoteState == DarkRemoteState.PUBLISHED) {
             return true;
@@ -590,8 +614,9 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setState(remoteState.toTrackingState());
         record.setLastReconciledAt(LocalDateTime.now());
         if (remoteState == DarkRemoteState.DRAFT || remoteState == DarkRemoteState.UPDATE) {
-            record.setLastError(darkErrorCodec.encode("CONFLICT", "PENDING_RECONCILIATION", "READ_REMOTE_STATE", null,
-                    false, "Remote ARK state requires reconciliation before staging", Map.of("remoteState", remoteState.name())));
+            if (!darkErrorCodec.hasUnknownOutcome(record.getLastError()))
+                record.setLastError(darkErrorCodec.encode("CONFLICT", "PENDING_RECONCILIATION", "READ_REMOTE_STATE", null,
+                        false, "Remote ARK state requires reconciliation before staging", Map.of("remoteState", remoteState.name())));
             darkTrackingRepository.save(record);
             pageSkippedUnchanged++;
             runSkippedUnchanged++;
@@ -670,7 +695,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArk(candidate.getArk());
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setStagePayloadHash(candidate.getStagePayloadHash());
+        // Preserve the last confirmed payload hash when the response was lost.
+        if (!darkErrorCodec.hasUnknownOutcome(error)) record.setStagePayloadHash(candidate.getStagePayloadHash());
         record.setTargetUrl(candidate.getTargetUrl());
         record.setState(retryableFailureState(candidate));
         record.setLastError(error);

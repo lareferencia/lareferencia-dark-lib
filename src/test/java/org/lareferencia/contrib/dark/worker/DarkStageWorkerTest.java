@@ -94,6 +94,21 @@ class DarkStageWorkerTest {
     }
 
     @Test
+    void doesNotAutomaticallyResendAnUnknownStageOutcome() throws Exception {
+        OAIRecord record = OAIRecord.create("oai:test:unknown", null, "new-hash", false);
+        var tracked = new DarkTrackingRecord(); tracked.setArkNaan("12345"); tracked.setOaiId(record.getIdentifier());
+        tracked.setArk("ark:12345/unknown"); tracked.setState(DarkTrackingState.UPDATE);
+        tracked.setStagePayloadHash("confirmed-hash");
+        tracked.setLastError(new org.lareferencia.contrib.dark.services.DarkErrorCodec().encode(
+                new DarkMinterClientException(503, DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true, "response lost"), "STAGE"));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", record.getIdentifier()))).thenReturn(Optional.of(tracked));
+        worker.prePage(); worker.processItem(record); worker.postPage();
+        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(metadataStore, never()).getMetadata(any(), any());
+        assertEquals("confirmed-hash", tracked.getStagePayloadHash());
+    }
+
+    @Test
     @DisplayName("Reserve and stage a new record to draft")
     void reservesAndStagesNewRecord() throws Exception {
         OAIRecord record = OAIRecord.create("oai:test:1", null, "hash-1", false);
