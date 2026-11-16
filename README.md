@@ -75,7 +75,7 @@ See [LICENSE.txt](../LICENSE.txt) for complete terms.
 ---
 
 **LA Referencia** - Red Latinoamericana y de España de Ciencia Abierta  
-Part of the LA Referencia Platform 5.0.0-rc3
+Part of the LA Referencia Platform; Maven version inherited from `lareferencia-parent`.
 
 
 ## Autenticación DARK2 y gestión de claves
