@@ -40,16 +40,16 @@
             </plugin>
         </plugins>
     </build>
-    <version>5.0.0-rc3</version>
 	<properties>
 		<web3j.version>4.9.8-hotfix</web3j.version>
 	</properties>
 
 	<parent>
-		<groupId>org.lareferencia</groupId>
-		<artifactId>lareferencia-parent</artifactId>
-		<version>5.0.0-rc3</version>
-	</parent>
+        <groupId>org.lareferencia</groupId>
+        <artifactId>lareferencia-parent</artifactId>
+        <version>5.0.0-rc4</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
 
 
 	<dependencies>
@@ -58,7 +58,6 @@
 		<dependency>
 			<groupId>org.lareferencia</groupId>
 			<artifactId>lareferencia-core-lib</artifactId>
-			<version>5.0.0-rc3</version>
 			<scope>provided</scope>
 		</dependency>
 
