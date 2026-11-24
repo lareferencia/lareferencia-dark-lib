@@ -662,7 +662,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setOaiId(candidate.getOaiId());
         record.setArk(candidate.getArk());
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setStagePayloadHash(candidate.getStagePayloadHash());
         record.setTargetUrl(candidate.getTargetUrl());
         record.setState(DarkTrackingState.RESERVED);
         record.setLastError(null);
@@ -702,7 +701,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArk(candidate.getArk());
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setStagePayloadHash(candidate.getStagePayloadHash());
         record.setTargetUrl(candidate.getTargetUrl());
         record.setState(DarkTrackingState.ERROR);
         record.setLastError(error);
@@ -719,8 +717,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArk(candidate.getArk());
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        // Preserve the last confirmed payload hash when the response was lost.
-        if (!darkErrorCodec.hasUnknownOutcome(error)) record.setStagePayloadHash(candidate.getStagePayloadHash());
         record.setTargetUrl(candidate.getTargetUrl());
         record.setState(retryableFailureState(candidate));
         record.setLastError(error);

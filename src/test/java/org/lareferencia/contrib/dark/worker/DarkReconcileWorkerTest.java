@@ -204,6 +204,43 @@ class DarkReconcileWorkerTest {
         assertEquals(DarkTrackingState.DRAFT, second.getState());
     }
 
+    @Test
+    void manualReconciliationChecksEverySelectedArkAcrossPagesIncludingTerminalStates() {
+        List<String> ids = java.util.stream.IntStream.range(0, 80).mapToObj(i -> "oai:test:" + i).toList();
+        Network network = new Network();
+        network.setAcronym("TEST");
+        worker.setRunningContext(new DarkManualRunningContext(network, "operator",
+                DarkManualRunningContext.Action.RECONCILE, ids));
+        when(darkProperties.getReconcilePageSize()).thenReturn(20);
+        when(darkNetworkSettingsResolver.resolveArkNaan(network)).thenReturn("12345");
+        worker.preRun();
+        var pages = (SelectedDarkTrackingPaginator) ReflectionTestUtils.getField(worker, "paginator");
+        assertEquals(4, pages.getTotalPages());
+        for (int start = 0; start < ids.size(); start += 20) {
+            List<String> slice = ids.subList(start, start + 20);
+            var records = slice.stream().map(id -> record(id, "ark:12345/" + id)).toList();
+            for (int i = 0; i < records.size(); i++) {
+                records.get(i).setState(i % 2 == 0 ? DarkTrackingState.PUBLISHED : DarkTrackingState.TOMBSTONE);
+            }
+            when(darkTrackingRepository.findByIdArkNaanAndIdOaiIdIn("12345", slice)).thenReturn(records);
+            List<String> arks = records.stream().map(DarkTrackingRecord::getArk).toList();
+            var response = new ArkStatusBatchResponse();
+            response.setVersion("v1");
+            response.setResults(arks.stream().map(ark -> {
+                var remote = new ARKResponse();
+                remote.setArk(ark);
+                remote.setState(DarkRemoteState.PUBLISHED);
+                return status(ark, remote);
+            }).toList());
+            when(darkMinterClient.getArkStatuses(arks)).thenReturn(response);
+            worker.prePage();
+            pages.nextPage().forEach(worker::processItem);
+            worker.postPage();
+            verify(darkMinterClient).getArkStatuses(arks);
+        }
+        assertEquals(80, worker.getManualProgress().succeeded());
+    }
+
     private void reconcile(DarkTrackingRecord record) {
         worker.prePage();
         worker.processItem(record);

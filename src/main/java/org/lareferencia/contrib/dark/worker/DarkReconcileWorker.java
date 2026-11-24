@@ -85,12 +85,10 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
                 ? manualContext.getOaiIds() : List.of();
         runInitialPending = selectedOaiIds.isEmpty()
                 ? darkTrackingRepository.countByIdArkNaanAndArkIsNotNullAndStateIn(currentArkNaan, reconcileStates)
-                : darkTrackingRepository.findByIdArkNaanAndIdOaiIdInAndArkIsNotNullAndStateIn(
-                        currentArkNaan, selectedOaiIds, reconcileStates,
-                        org.springframework.data.domain.PageRequest.of(0, selectedOaiIds.size())).getTotalElements();
+                : selectedOaiIds.size();
         org.lareferencia.core.worker.IPaginator<DarkTrackingRecord> paginator = selectedOaiIds.isEmpty()
                 ? new DarkTrackingPaginator(darkTrackingRepository, currentArkNaan, reconcileStates)
-                : new SelectedDarkTrackingPaginator(darkTrackingRepository, currentArkNaan, selectedOaiIds, reconcileStates);
+                : new SelectedDarkTrackingPaginator(darkTrackingRepository, currentArkNaan, selectedOaiIds);
         paginator.setPageSize(getPageSize());
         setPaginator(paginator);
         logger.info(

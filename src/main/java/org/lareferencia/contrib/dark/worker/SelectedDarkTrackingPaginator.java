@@ -1,7 +1,7 @@
 package org.lareferencia.contrib.dark.worker;
 
 import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
-import org.lareferencia.contrib.dark.domain.DarkTrackingState;
+import org.springframework.data.domain.PageImpl;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.core.worker.IPaginator;
 import org.springframework.data.domain.Page;
@@ -15,40 +15,40 @@ public class SelectedDarkTrackingPaginator implements IPaginator<DarkTrackingRec
     private final DarkTrackingRepository repository;
     private final String arkNaan;
     private final List<String> oaiIds;
-    private final Collection<DarkTrackingState> states;
     private int pageSize = 100;
-    private boolean consumed;
-    private long totalCount;
+    private int nextPage;
 
     public SelectedDarkTrackingPaginator(DarkTrackingRepository repository, String arkNaan,
-            Collection<String> oaiIds, Collection<DarkTrackingState> states) {
+            Collection<String> oaiIds) {
         this.repository = repository;
         this.arkNaan = arkNaan;
         this.oaiIds = List.copyOf(oaiIds);
-        this.states = states;
     }
 
     @Override
     public int getStartingPage() { return 1; }
 
     @Override
-    public int getTotalPages() { return oaiIds.isEmpty() ? 0 : 1; }
+    public int getTotalPages() { return (oaiIds.size() + pageSize - 1) / pageSize; }
 
     @Override
     public Page<DarkTrackingRecord> nextPage() {
-        if (consumed || oaiIds.isEmpty()) {
-            return Page.empty(PageRequest.of(0, pageSize));
+        var pageable = PageRequest.of(nextPage, pageSize);
+        if (nextPage >= getTotalPages()) return Page.empty(pageable);
+        int from = nextPage * pageSize;
+        List<String> ids = oaiIds.subList(from, Math.min(from + pageSize, oaiIds.size()));
+        List<DarkTrackingRecord> records = repository.findByIdArkNaanAndIdOaiIdIn(arkNaan, ids);
+        if (records.size() != ids.size()) {
+            throw new IllegalStateException("Selected dARK records disappeared during reconciliation");
         }
-        consumed = true;
-        Page<DarkTrackingRecord> page = repository.findByIdArkNaanAndIdOaiIdInAndArkIsNotNullAndStateIn(
-                arkNaan, oaiIds, states, PageRequest.of(0, pageSize));
-        totalCount = page.getTotalElements();
-        return page;
+        nextPage++;
+        return new PageImpl<>(records, pageable, oaiIds.size());
     }
 
     @Override
     public void setPageSize(int size) {
-        if (consumed) throw new IllegalStateException("Cannot change page size after paginator consumption");
+        if (nextPage > 0) throw new IllegalStateException("Cannot change page size after paginator consumption");
+        if (size < 1) throw new IllegalArgumentException("Page size must be positive");
         this.pageSize = size;
     }
 }

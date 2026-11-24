@@ -146,6 +146,7 @@ class DarkStageWorkerTest {
         assertEquals("ark:12345/abc", reserved.getArk());
         assertEquals(DarkTrackingState.RESERVED, reserved.getState());
         assertEquals("hash-1", reserved.getSourceMetadataHash());
+        org.junit.jupiter.api.Assertions.assertNull(reserved.getStagePayloadHash());
         assertEquals("https://example.org/resource/1", reserved.getTargetUrl());
 
         DarkTrackingRecord saved = captor.getAllValues().get(1);
@@ -313,6 +314,7 @@ class DarkStageWorkerTest {
         assertEquals("ark:12345/retry", saved.getArk());
         assertEquals(DarkTrackingState.RESERVED, saved.getState());
         assertEquals("hash-4", saved.getSourceMetadataHash());
+        org.junit.jupiter.api.Assertions.assertNull(saved.getStagePayloadHash());
         assertEquals("https://example.org/resource/4", saved.getTargetUrl());
         assertTrue(saved.getLastError().contains("\"category\":\"REMOTE_TRANSIENT\""));
         assertTrue(saved.getLastError().contains("\"phase\":\"STAGE\""));
@@ -327,6 +329,7 @@ class DarkStageWorkerTest {
         trackingRecord.setArkNaan("12345");
         trackingRecord.setArk("ark:12345/update");
         trackingRecord.setSourceMetadataHash("hash-5-old");
+        trackingRecord.setStagePayloadHash("confirmed-A");
         trackingRecord.setTargetUrl("https://example.org/resource/5/old");
         trackingRecord.setState(DarkTrackingState.PUBLISHED);
 
@@ -337,8 +340,13 @@ class DarkStageWorkerTest {
         when(level1MetadataService.buildMinimalMetadata(eq("oai:test:5"), any(), eq("https://example.org/resource/5/new")))
                 .thenReturn(Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026));
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:5"))).thenReturn(Optional.of(trackingRecord));
-        when(darkMinterClient.stageArk(eq("ark:12345/update"), any()))
-                .thenThrow(new DarkMinterClientException(500, "Internal server error"));
+        properties.getMinter().getAuthentication().setMode("dark2");
+        ARKResponse published = new ARKResponse();
+        published.setArk(trackingRecord.getArk());
+        published.setState(DarkRemoteState.PUBLISHED);
+        when(darkMinterClient.getArk(trackingRecord.getArk()))
+                .thenThrow(new DarkMinterClientException(503, "Preflight unavailable"))
+                .thenReturn(published);
 
         worker.prePage();
         worker.processItem(record);
@@ -349,9 +357,23 @@ class DarkStageWorkerTest {
         DarkTrackingRecord saved = captor.getValue();
         assertEquals(DarkTrackingState.UPDATE, saved.getState());
         assertEquals("hash-5-new", saved.getSourceMetadataHash());
+        assertEquals("confirmed-A", saved.getStagePayloadHash());
         assertEquals("https://example.org/resource/5/new", saved.getTargetUrl());
         assertTrue(saved.getLastError().contains("\"category\":\"REMOTE_TRANSIENT\""));
         assertTrue(saved.getLastError().contains("\"phase\":\"STAGE\""));
+
+        verify(darkMinterClient, never()).stageArk(any(), any());
+        DarkReconcileWorker reconciliation = new DarkReconcileWorker();
+        ReflectionTestUtils.setField(reconciliation, "darkTrackingRepository", darkTrackingRepository);
+        ReflectionTestUtils.invokeMethod(reconciliation, "applyRemoteStatus", saved, published);
+        assertEquals("confirmed-A", saved.getStagePayloadHash());
+
+        when(darkMinterClient.stageArk(eq(saved.getArk()), any())).thenReturn(published);
+        worker.prePage();
+        worker.processItem(record);
+        worker.postPage();
+        verify(darkMinterClient).stageArk(eq(saved.getArk()), any());
+        assertNotEquals("confirmed-A", saved.getStagePayloadHash());
     }
 
     @Test
