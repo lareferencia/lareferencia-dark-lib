@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.lareferencia.contrib.dark.services.DarkAttemptJournal;
+import org.lareferencia.contrib.dark.services.DarkAttemptJournal.Batch;
 import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 import org.lareferencia.contrib.dark.services.DarkCredentialService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,46 +38,51 @@ public class DarkMinterClient {
     private final DarkProperties properties;
     private final DarkCredentialService credentials;
 
+    private final DarkAttemptJournal journal;
+
+    public void prepareTracking() {
+        journal.prepare(properties.getMinter().getBaseUrl(), properties.getAuthorityId());
+    }
+
     private record ReservationTarget(URI uri, String authority) {}
     // Access is serialized with credential changes and mutation sends.
     private final Map<ReservationTarget, Instant> reservationPauses = new HashMap<>();
 
     @Autowired
-    public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials) {
+    public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials, DarkAttemptJournal journal) {
         this(HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(REQUEST_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NEVER)
-                .build(), new ObjectMapper(), properties, credentials);
+                .build(), new ObjectMapper(), properties, credentials, journal);
     }
 
-    DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties) {
-        this(httpClient, objectMapper, properties, null);
-    }
-
-    DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties, DarkCredentialService credentials) {
+    DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties,
+            DarkCredentialService credentials, DarkAttemptJournal journal) {
+        this.journal = java.util.Objects.requireNonNull(journal);
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.credentials = credentials;
     }
 
-    public ReserveBatchResponse reserveBatch(String authorityId, String naan, List<String> clientItemIds) {
+    public ReserveBatchResponse reserveBatch(String authorityId, Batch batch) {
         String normalizedAuthorityId = normalizeRequired(authorityId, "authorityId");
-        String normalizedNaan = normalizeRequired(naan, "naan");
-        ReserveBatchRequest request = ReserveBatchRequest.fromClientItemIds(normalizedAuthorityId, normalizedNaan, clientItemIds);
-        return sendModification("POST", "/api/v1/arks/batch", normalizedAuthorityId, request, ReserveBatchResponse.class);
+        var ids = batch.items().stream().map(DarkAttemptJournal.Item::oaiId).toList();
+        var request = ReserveBatchRequest.fromClientItemIds(normalizedAuthorityId, batch.naan(), ids);
+        return sendModification("POST", "/api/v1/arks/batch", normalizedAuthorityId, request, ReserveBatchResponse.class, batch);
     }
 
-    public ARKResponse stageArk(String ark, StageArkRequest request) {
+    public ARKResponse stageArk(String ark, StageArkRequest request, Batch batch) {
+        if (batch.items().size() != 1 || !java.util.Objects.equals(ark, batch.items().get(0).ark()))
+            throw new IllegalArgumentException("Stage requires one tracking record matching the ARK");
         String normalizedAuthorityId = normalizeRequired(request.getAuthorityId(), "authorityId");
         request.setAuthorityId(normalizedAuthorityId);
-        return sendModification("PUT", "/api/v1/arks/" + DarkArkIdentifier.normalize(ark), normalizedAuthorityId, request, ARKResponse.class);
+        return sendModification("PUT", "/api/v1/arks/" + DarkArkIdentifier.normalize(ark), normalizedAuthorityId, request, ARKResponse.class, batch);
     }
 
-    private <T> T sendModification(String method, String path, String authority, Object payload, Class<T> responseType) {
+    private <T> T sendModification(String method, String path, String authority, Object payload, Class<T> responseType, Batch batch) {
         synchronized (properties) {
-            var auth = properties.getMinter().getAuthentication();
             requireModificationsEnabled();
             URI uri = buildUri(path);
             byte[] body;
@@ -84,22 +91,15 @@ public class DarkMinterClient {
             HttpRequest.Builder builder = HttpRequest.newBuilder(uri).timeout(REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json").header("Accept", "application/json")
                     .method(method, HttpRequest.BodyPublishers.ofByteArray(body));
-            if ("dark2".equals(auth.getMode())) {
-                if (credentials == null) throw new DarkMinterClientException(503, "DARK_CREDENTIAL_UNAVAILABLE", false, "Signing service unavailable");
-                if (method.equals("POST") && path.equals("/api/v1/arks/batch")) {
-                    return sendSignedReservation(uri, authority, body, builder, responseType);
-                }
-                return sendSignedOnce(method, uri, authority, body, builder, responseType, false);
+            if (method.equals("POST") && path.equals("/api/v1/arks/batch")) {
+                return sendReservation(uri, authority, body, builder, responseType, batch);
             }
-            builder.header(authHeaderName(), authority);
-            if (!"legacy".equals(auth.getMode()))
-                throw new DarkMinterClientException(503, "DARK_AUTHENTICATION_MODE_INVALID", false, "Unsupported authentication mode");
-            return sendJsonRequest(builder, responseType);
+            return sendMutationOnce(method, uri, authority, body, builder, responseType, false, batch);
         }
     }
 
-    private <T> T sendSignedReservation(URI uri, String authority, byte[] body,
-            HttpRequest.Builder builder, Class<T> responseType) {
+    private <T> T sendReservation(URI uri, String authority, byte[] body,
+            HttpRequest.Builder builder, Class<T> responseType, Batch batch) {
         var target = new ReservationTarget(uri, authority);
         Instant retryAt = reservationPauses.get(target);
         if (retryAt != null && Instant.now().isBefore(retryAt)) {
@@ -108,7 +108,7 @@ public class DarkMinterClient {
         reservationPauses.remove(target);
         for (int attempt = 0; ; attempt++) {
             try {
-                return sendSignedOnce("POST", uri, authority, body, builder, responseType, true);
+                return sendMutationOnce("POST", uri, authority, body, builder, responseType, true, batch);
             } catch (DarkMinterClientException e) {
                 if (!isPreReservationRefusal(e)) throw e;
                 if (attempt == 0 && properties.getMinter().getRetry().getMaxRetries() > 0) {
@@ -129,13 +129,20 @@ public class DarkMinterClient {
                 && ReservationDeferred.AUTHORITY_STATUS_UNAVAILABLE.equals(e.getErrorCode());
     }
 
-    private <T> T sendSignedOnce(String method, URI uri, String authority, byte[] body,
-            HttpRequest.Builder builder, Class<T> responseType, boolean reservation) {
-        // Sign again even for identical bytes: authentication already consumed the previous nonce.
-        credentials.headers(method, uri, authority, body).forEach(builder::setHeader);
-        builder.setHeader("X-Authority-Id", authority);
+    private <T> T sendMutationOnce(String method, URI uri, String authority, byte[] body,
+            HttpRequest.Builder builder, Class<T> responseType, boolean reservation, Batch batch) {
+        if ("dark2".equals(properties.getMinter().getAuthentication().getMode())) {
+            if (credentials == null) throw new DarkMinterClientException(503, "DARK_CREDENTIAL_UNAVAILABLE", false, "Signing service unavailable");
+            // Each permitted reservation retry needs a new signature and nonce.
+            credentials.headers(method, uri, authority, body).forEach(builder::setHeader);
+            builder.setHeader("X-Authority-Id", authority);
+        } else {
+            builder.setHeader(authHeaderName(), authority);
+        }
+        HttpRequest request = builder.build();
         try {
-            return sendJsonRequestOnce(builder.build(), responseType);
+            return journal.send(properties.getMinter().getBaseUrl(), authority, reservation ? "RESERVE" : "STAGE",
+                    batch, () -> sendJsonRequestOnce(request, responseType));
         } catch (DarkMinterClientException e) {
             if (reservation && isPreReservationRefusal(e)) throw e;
             if (e.isRetryable() || "CLIENT_INTERRUPTED".equals(e.getErrorCode())
@@ -285,6 +292,7 @@ public class DarkMinterClient {
 
     private URI buildUri(String path) {
         String baseUrl = properties.getMinter().getBaseUrl();
+        journal.checkDestination(baseUrl, properties.getAuthorityId());
         String normalizedBase = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         return URI.create(normalizedBase + path);
     }

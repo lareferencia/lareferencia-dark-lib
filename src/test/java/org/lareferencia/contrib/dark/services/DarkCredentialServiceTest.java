@@ -42,7 +42,7 @@ class DarkCredentialServiceTest {
             var row = (DarkRuntimeConfiguration) call.getArgument(0); saved.set(row); return row;
         });
         properties.setStoreBasePath(directory.toString());
-        configuration = new DarkRuntimeConfigurationService(repository, mapper, properties, transactions);
+        configuration = new DarkRuntimeConfigurationService(repository, mapper, properties, transactions, mock(DarkAttemptJournal.class));
         credentials = new DarkCredentialService(properties, configuration, new DarkKeyStorage());
         ObjectNode config = (ObjectNode) configuration.defaults();
         ObjectNode client = (ObjectNode) config.path("client");
@@ -121,7 +121,7 @@ class DarkCredentialServiceTest {
 
         // Rebuild services, as after a process restart. The persisted pause remains effective.
         var restartedProperties = new DarkProperties(); restartedProperties.setStoreBasePath(properties.getStoreBasePath());
-        var restartedConfiguration = new DarkRuntimeConfigurationService(repository, mapper, restartedProperties, transactions);
+        var restartedConfiguration = new DarkRuntimeConfigurationService(repository, mapper, restartedProperties, transactions, mock(DarkAttemptJournal.class));
         restartedConfiguration.loadPersistedConfiguration();
         var restarted = new DarkCredentialService(restartedProperties, restartedConfiguration, new DarkKeyStorage());
         assertEquals(second.keyId(), restarted.status().keyId());

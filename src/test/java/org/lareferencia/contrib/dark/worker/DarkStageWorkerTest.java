@@ -103,7 +103,7 @@ class DarkStageWorkerTest {
                 new DarkMinterClientException(503, DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true, "response lost"), "STAGE"));
         when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", record.getIdentifier()))).thenReturn(Optional.of(tracked));
         worker.prePage(); worker.processItem(record); worker.postPage();
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
         verify(metadataStore, never()).getMetadata(any(), any());
         assertEquals("confirmed-hash", tracked.getStagePayloadHash());
     }
@@ -126,13 +126,13 @@ class DarkStageWorkerTest {
         reserveItem.setState(DarkRemoteState.RESERVED);
         reserveItem.setClientItemId("oai:test:1");
         reserveResponse.setResults(List.of(reserveItem));
-        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:1")))
+        when(darkMinterClient.reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals("oai:test:1"))))
                 .thenReturn(reserveResponse);
 
         ARKResponse stageResponse = new ARKResponse();
         stageResponse.setArk("ark:12345/abc");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:12345/abc"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/abc"), any(), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
@@ -183,21 +183,21 @@ class DarkStageWorkerTest {
         ark.setClientItemId(id);
         var reserved = new ReserveBatchResponse();
         reserved.setResults(List.of(ark));
-        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of(id))).thenThrow(deferred).thenReturn(reserved);
-        when(darkMinterClient.stageArk(eq(ark.getArk()), any())).thenReturn(ark);
+        when(darkMinterClient.reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals(id)))).thenThrow(deferred).thenReturn(reserved);
+        when(darkMinterClient.stageArk(eq(ark.getArk()), any(), any())).thenReturn(ark);
 
         worker.prePage(); worker.processItem(item); worker.postPage();
         var row = rows.get(DarkTrackingRecordId.of("12345", id));
         assertTrue(row.getLastError().contains("RESERVATION_PENDING"));
         assertEquals(1, rows.size());
         worker.prePage(); worker.processItem(item); worker.postPage();
-        verify(darkMinterClient, times(1)).reserveBatch(any(), any(), any());
+        verify(darkMinterClient, times(1)).reserveBatch(any(), any());
         // Advance the persisted deadline, as on a later scheduled pass.
         row.setLastError(new org.lareferencia.contrib.dark.services.DarkErrorCodec()
                 .pendingReservation(java.time.Instant.EPOCH));
         worker.prePage(); worker.processItem(item); worker.postPage();
-        verify(darkMinterClient, times(2)).reserveBatch("authority-1", "12345", List.of(id));
-        verify(darkMinterClient, times(1)).stageArk(eq(ark.getArk()), any());
+        verify(darkMinterClient, times(2)).reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals(id)));
+        verify(darkMinterClient, times(1)).stageArk(eq(ark.getArk()), any(), any());
         assertEquals(1, rows.size());
         assertEquals(DarkTrackingState.DRAFT, row.getState());
         org.junit.jupiter.api.Assertions.assertNull(row.getLastError());
@@ -240,8 +240,8 @@ class DarkStageWorkerTest {
         verify(darkOriginalMetadataTransformerService).transformForMinter(any(), any(), any(), any(), any());
         verify(urlExtractionService).extractBestUrl(any());
         verify(level1MetadataService).buildMinimalMetadata(any(), any(), any());
-        verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).reserveBatch(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
         verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
     }
 
@@ -262,14 +262,14 @@ class DarkStageWorkerTest {
         batchError.setClientItemId("oai:test:3");
         batchError.setError("(psycopg2.errors.InFailedSqlTransaction) current transaction is aborted, commands ignored until end of transaction block");
         reserveResponse.setErrors(List.of(batchError));
-        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:3")))
+        when(darkMinterClient.reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals("oai:test:3"))))
                 .thenReturn(reserveResponse);
 
         worker.prePage();
         worker.processItem(record);
 
         assertThrows(DarkMinterClientException.class, () -> worker.postPage());
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
         verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
     }
 
@@ -291,9 +291,9 @@ class DarkStageWorkerTest {
         reserveItem.setState(DarkRemoteState.RESERVED);
         reserveItem.setClientItemId("oai:test:4");
         reserveResponse.setResults(List.of(reserveItem));
-        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:4")))
+        when(darkMinterClient.reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals("oai:test:4"))))
                 .thenReturn(reserveResponse);
-        when(darkMinterClient.stageArk(eq("ark:12345/retry"), any()))
+        when(darkMinterClient.stageArk(eq("ark:12345/retry"), any(), any()))
                 .thenThrow(new DarkMinterClientException(500, "Internal server error"));
 
         worker.prePage();
@@ -362,17 +362,17 @@ class DarkStageWorkerTest {
         assertTrue(saved.getLastError().contains("\"category\":\"REMOTE_TRANSIENT\""));
         assertTrue(saved.getLastError().contains("\"phase\":\"STAGE\""));
 
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
         DarkReconcileWorker reconciliation = new DarkReconcileWorker();
         ReflectionTestUtils.setField(reconciliation, "darkTrackingRepository", darkTrackingRepository);
         ReflectionTestUtils.invokeMethod(reconciliation, "applyRemoteStatus", saved, published);
         assertEquals("confirmed-A", saved.getStagePayloadHash());
 
-        when(darkMinterClient.stageArk(eq(saved.getArk()), any())).thenReturn(published);
+        when(darkMinterClient.stageArk(eq(saved.getArk()), any(), any())).thenReturn(published);
         worker.prePage();
         worker.processItem(record);
         worker.postPage();
-        verify(darkMinterClient).stageArk(eq(saved.getArk()), any());
+        verify(darkMinterClient).stageArk(eq(saved.getArk()), any(), any());
         assertNotEquals("confirmed-A", saved.getStagePayloadHash());
     }
 
@@ -399,7 +399,7 @@ class DarkStageWorkerTest {
         ARKResponse stageResponse = new ARKResponse();
         stageResponse.setArk("ark:12345/update-success");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:12345/update-success"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/update-success"), any(), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
@@ -437,14 +437,14 @@ class DarkStageWorkerTest {
         ARKResponse stageResponse = new ARKResponse();
         stageResponse.setArk("ark:12345/update-state");
         stageResponse.setState(DarkRemoteState.DRAFT);
-        when(darkMinterClient.stageArk(eq("ark:12345/update-state"), any())).thenReturn(stageResponse);
+        when(darkMinterClient.stageArk(eq("ark:12345/update-state"), any(), any())).thenReturn(stageResponse);
 
         worker.prePage();
         worker.processItem(record);
         worker.postPage();
 
         verify(metadataStore).getMetadata(any(), eq("hash-7"));
-        verify(darkMinterClient).stageArk(eq("ark:12345/update-state"), any());
+        verify(darkMinterClient).stageArk(eq("ark:12345/update-state"), any(), any());
         verify(darkTrackingRepository).save(trackingRecord);
         assertEquals(DarkTrackingState.DRAFT, trackingRecord.getState());
     }
@@ -471,7 +471,7 @@ class DarkStageWorkerTest {
 
         verify(level1MetadataService, times(2)).buildMinimalMetadata(any(), any(), any());
         verify(darkTrackingRepository, times(2)).save(any(DarkTrackingRecord.class));
-        verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
+        verify(darkMinterClient, never()).reserveBatch(any(), any());
     }
 
     @Test
@@ -492,7 +492,7 @@ class DarkStageWorkerTest {
         error.setClientItemId("oai:test:batch-error");
         error.setError("Record validation failed");
         response.setErrors(List.of(error));
-        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of("oai:test:batch-error")))
+        when(darkMinterClient.reserveBatch(eq("authority-1"), org.mockito.ArgumentMatchers.argThat(batch -> batch.items().size() == 1 && batch.items().get(0).oaiId().equals("oai:test:batch-error"))))
                 .thenReturn(response);
 
         worker.prePage();
@@ -500,7 +500,7 @@ class DarkStageWorkerTest {
         worker.postPage();
 
         verify(darkTrackingRepository, times(1)).save(any(DarkTrackingRecord.class));
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
     }
 
     @Test
@@ -533,8 +533,8 @@ class DarkStageWorkerTest {
         worker.postPage();
 
         assertTrue((Boolean) ReflectionTestUtils.getField(worker, "pageHaltedBySystemicError"));
-        verify(darkMinterClient, never()).reserveBatch(any(), any(), any());
-        verify(darkMinterClient, never()).stageArk(any(), any());
+        verify(darkMinterClient, never()).reserveBatch(any(), any());
+        verify(darkMinterClient, never()).stageArk(any(), any(), any());
         verify(darkTrackingRepository, times(20)).save(any(DarkTrackingRecord.class));
     }
 

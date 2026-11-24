@@ -72,6 +72,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     protected void preRun() {
+        darkMinterClient.prepareTracking();
         setPageSize(Math.min(darkProperties.getReconcilePageSize(), MINTER_STATUS_BATCH_LIMIT));
         currentArkNaan = darkNetworkSettingsResolver.resolveArkNaan(runningContext.getNetwork());
         resetRunCounters();
@@ -101,6 +102,7 @@ public class DarkReconcileWorker extends BaseBatchWorker<DarkTrackingRecord, Net
 
     @Override
     public void prePage() {
+        darkMinterClient.prepareTracking();
         pageRecords.clear();
         pageProcessed = 0;
         pageSkippedWithoutArk = 0;

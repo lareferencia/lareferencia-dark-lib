@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.lareferencia.contrib.dark.services.DarkProperties;
 import org.mockito.ArgumentCaptor;
+import org.lareferencia.contrib.dark.services.DarkAttemptJournal;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -27,6 +28,27 @@ import static org.mockito.Mockito.when;
 @DisplayName("DarkMinterClient tests")
 class DarkMinterClientTest {
 
+    private static DarkAttemptJournal transportJournal() {
+        var journal = mock(DarkAttemptJournal.class);
+        when(journal.send(any(), any(), any(), any(), any())).thenAnswer(call ->
+                call.<java.util.function.Supplier<?>>getArgument(4).get());
+        return journal;
+    }
+
+    private static DarkAttemptJournal.Batch batch(String id) {
+        return new DarkAttemptJournal.Batch("12345", List.of(new DarkAttemptJournal.Item(id, null, null, null, null, null, null)));
+    }
+
+    @Test
+    void journalFailurePreventsSendingTheMutation() {
+        var http = mock(HttpClient.class);
+        var journal = mock(DarkAttemptJournal.class);
+        when(journal.send(any(), any(), any(), any(), any())).thenThrow(new IllegalStateException("Database unavailable"));
+        var client = new DarkMinterClient(http, new ObjectMapper(), properties(), null, journal);
+        assertThrows(IllegalStateException.class, () -> client.reserveBatch("authority-1", batch("oai:test")));
+        org.mockito.Mockito.verifyNoInteractions(http);
+    }
+
     @Test
     void dark2SignsTheExactSentBytesAndEachSendHasANewNonce() throws Exception {
         var pair = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
@@ -45,8 +67,8 @@ class DarkMinterClientTest {
                 "X-DARK-Error-Code", List.of("AUTHORITY_STATUS_UNAVAILABLE"), "X-DARK-Retryable", List.of("true")));
         var accepted = mockResponse(200, "{\"results\":[],\"errors\":[]}");
         when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(refused, accepted);
-        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
-        client.reserveBatch("authority-1", "12345", List.of("oai:áñ:1"));
+        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials, transportJournal());
+        client.reserveBatch("authority-1", batch("oai:áñ:1"));
         ArgumentCaptor<HttpRequest> requests = ArgumentCaptor.forClass(HttpRequest.class);
         verify(http, times(2)).send(requests.capture(), any(HttpResponse.BodyHandler.class));
         var first = requests.getAllValues().get(0);
@@ -80,13 +102,13 @@ class DarkMinterClientTest {
         when(credentials.headers(any(), any(), any(), any())).thenReturn(Map.of());
         var http = mock(HttpClient.class);
         when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenThrow(new java.io.IOException("response lost"));
-        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
+        var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials, transportJournal());
         assertEquals(DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, assertThrows(DarkMinterClientException.class,
-                () -> client.reserveBatch("authority-1", "12345", List.of("oai:1"))).getErrorCode());
+                () -> client.reserveBatch("authority-1", batch("oai:1"))).getErrorCode());
         verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         properties.getMinter().getAuthentication().setRegistrationStatus("pending_registration");
         assertEquals("DARK_AUTHENTICATION_PAUSED", assertThrows(DarkMinterClientException.class,
-                () -> client.reserveBatch("authority-1", "12345", List.of("oai:1"))).getErrorCode());
+                () -> client.reserveBatch("authority-1", batch("oai:1"))).getErrorCode());
         verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         var readResponse = mockResponse(200, "{\"version\":\"v1\",\"results\":[]}");
         org.mockito.Mockito.doReturn(readResponse).when(http).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
@@ -107,11 +129,11 @@ class DarkMinterClientTest {
                 "X-DARK-Retryable", List.of("true")));
         var success = mockResponse(200, "{\"results\":[]}");
         when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(refused, refused, success);
-        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials);
-        var paused = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", "12345", List.of("id")));
-        var later = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", "12345", List.of("different")));
+        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials, transportJournal());
+        var paused = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", batch("id")));
+        var later = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", batch("different")));
         assertEquals(paused.getRetryAt(), later.getRetryAt());
-        client.reserveBatch("b", "12345", List.of("id"));
+        client.reserveBatch("b", batch("id"));
         verify(http, times(3)).send(any(), any());
     }
 
@@ -124,9 +146,9 @@ class DarkMinterClientTest {
         var http = mock(HttpClient.class);
         var response = mockResponse(503, "{\"detail\":\"AUTHORITY_STATUS_UNAVAILABLE\"}");
         when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
-        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials);
+        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials, transportJournal());
         var error = assertThrows(DarkMinterClientException.class,
-                () -> client.reserveBatch("a", "12345", List.of("id")));
+                () -> client.reserveBatch("a", batch("id")));
         assertEquals(DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, error.getErrorCode());
         verify(http).send(any(), any());
     }
@@ -140,8 +162,8 @@ class DarkMinterClientTest {
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
-        ReserveBatchResponse batchResponse = client.reserveBatch("authority-1", "12345", List.of("oai:1"));
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
+        ReserveBatchResponse batchResponse = client.reserveBatch("authority-1", batch("oai:1"));
 
         assertEquals(1, batchResponse.getResults().size());
         assertEquals("ark:12345/abc", batchResponse.getResults().get(0).getArk());
@@ -169,7 +191,7 @@ class DarkMinterClientTest {
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
         ARKResponse ark = client.getArk("ark:12345/abc");
 
         assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
@@ -185,7 +207,7 @@ class DarkMinterClientTest {
                 """);
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
         ArkStatusBatchResponse batch = client.getArkStatuses(List.of("ark:/12345/abc"));
 
         ArgumentCaptor<HttpRequest> request = ArgumentCaptor.forClass(HttpRequest.class);
@@ -203,7 +225,7 @@ class DarkMinterClientTest {
         HttpResponse<String> response = mockResponse(404, "{\"detail\":\"ARK not found\"}");
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
                 () -> client.getArk("ark:12345/missing"));
@@ -228,7 +250,7 @@ class DarkMinterClientTest {
                         "X-DARK-Retryable", List.of("true")));
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
                 () -> client.getArk("ark:12345/pending"));
@@ -246,7 +268,7 @@ class DarkMinterClientTest {
         HttpResponse<String> response = mockResponse(500, "{\"detail\":\"Internal server error\"}");
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
                 () -> client.getArk("ark:12345/pending"));
@@ -270,7 +292,7 @@ class DarkMinterClientTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(retryableResponse, retryableResponse, successResponse);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
         ARKResponse ark = client.getArk("ark:12345/abc");
 
         assertEquals(DarkRemoteState.PUBLISHED, ark.getState());
@@ -289,7 +311,7 @@ class DarkMinterClientTest {
                         "X-DARK-Retryable", List.of("false")));
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
 
-        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties());
+        DarkMinterClient client = new DarkMinterClient(httpClient, new ObjectMapper(), properties(), null, transportJournal());
 
         DarkMinterClientException error = assertThrows(DarkMinterClientException.class,
                 () -> client.getArk("ark:12345/pending"));
@@ -310,7 +332,7 @@ class DarkMinterClientTest {
 
         DarkMinterClientException error = assertThrows(
                 DarkMinterClientException.class,
-                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:12345/moved"));
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties, null, transportJournal()).getArk("ark:12345/moved"));
 
         assertEquals(302, error.getStatusCode());
     }
@@ -327,7 +349,7 @@ class DarkMinterClientTest {
 
         DarkMinterClientException error = assertThrows(
                 DarkMinterClientException.class,
-                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties).getArk("ark:12345/empty"));
+                () -> new DarkMinterClient(httpClient, new ObjectMapper(), properties, null, transportJournal()).getArk("ark:12345/empty"));
 
         assertEquals("EMPTY_RESPONSE", error.getErrorCode());
     }

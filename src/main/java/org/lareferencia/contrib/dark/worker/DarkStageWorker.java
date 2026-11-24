@@ -16,6 +16,7 @@ import org.lareferencia.contrib.dark.domain.DarkTrackingState;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.contrib.dark.services.DarkLevel1MetadataService;
 import org.lareferencia.contrib.dark.services.DarkErrorCodec;
+import org.lareferencia.contrib.dark.services.DarkAttemptJournal;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
 import org.lareferencia.contrib.dark.services.DarkOriginalMetadataTransformerService;
 import org.lareferencia.contrib.dark.services.DarkProperties;
@@ -116,6 +117,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     protected void preRun() {
         darkMinterClient.requireModificationsEnabled();
         validateConfiguration();
+        darkMinterClient.prepareTracking();
         setPageSize(darkProperties.getStagePageSize());
         resetRunCounters();
         currentArkNaan = null;
@@ -182,6 +184,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
     @Override
     public void prePage() {
+        darkMinterClient.prepareTracking();
         recordsToReserve.clear();
         recordsToStage.clear();
         pageProcessed = 0;
@@ -412,6 +415,13 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         return runningContext instanceof DarkManualRunningContext;
     }
 
+    private DarkAttemptJournal.Batch attempt(List<DarkStageCandidate> candidates) {
+        var items = candidates.stream().map(candidate -> new DarkAttemptJournal.Item(
+                candidate.getOaiId(), candidate.getArk(), candidate.getStagePayloadHash(), candidate.getSourceMetadataHash(),
+                candidate.getTargetUrl(), runningContext.getNetwork().getId(), snapshotMetadata.getSnapshotId())).toList();
+        return new DarkAttemptJournal.Batch(currentArkNaan, items);
+    }
+
     private void reservePendingRecords() {
         if (recordsToReserve.isEmpty()) {
             return;
@@ -426,9 +436,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             ReserveBatchResponse response;
             try {
                 response = darkMinterClient.reserveBatch(
-                        darkProperties.getAuthorityId(),
-                        currentArkNaan,
-                        chunk.stream().map(DarkStageCandidate::getOaiId).toList());
+                        darkProperties.getAuthorityId(), attempt(chunk));
             } catch (ReservationDeferred deferred) {
                 String pending = darkErrorCodec.pendingReservation(deferred.getRetryAt());
                 for (DarkStageCandidate candidate : chunk) {
@@ -575,7 +583,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                         .build();
 
                 logger.debug("DARK stage sending metadata for record {} to ARK {}", candidate.getOaiId(), ark);
-                ARKResponse response = darkMinterClient.stageArk(ark, request);
+                ARKResponse response = darkMinterClient.stageArk(ark, request, attempt(List.of(candidate)));
                 stageSubmitted = true;
                 validateStageResponse(candidate, response);
                 persistSuccess(candidate, response);
