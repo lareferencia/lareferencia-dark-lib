@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.services.DarkProperties;
-import org.lareferencia.contrib.dark.services.DarkAttemptJournal;
-import org.lareferencia.contrib.dark.services.DarkAttemptJournal.Batch;
+import org.lareferencia.contrib.dark.services.DarkAttemptTracking;
+import org.lareferencia.contrib.dark.services.DarkAttemptTracking.Batch;
 import org.lareferencia.contrib.dark.services.DarkArkIdentifier;
 import org.lareferencia.contrib.dark.services.DarkCredentialService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,28 +38,24 @@ public class DarkMinterClient {
     private final DarkProperties properties;
     private final DarkCredentialService credentials;
 
-    private final DarkAttemptJournal journal;
-
-    public void prepareTracking() {
-        journal.prepare(properties.getMinter().getBaseUrl(), properties.getAuthorityId());
-    }
+    private final DarkAttemptTracking tracking;
 
     private record ReservationTarget(URI uri, String authority) {}
     // Access is serialized with credential changes and mutation sends.
     private final Map<ReservationTarget, Instant> reservationPauses = new HashMap<>();
 
     @Autowired
-    public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials, DarkAttemptJournal journal) {
+    public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials, DarkAttemptTracking tracking) {
         this(HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(REQUEST_TIMEOUT)
                 .followRedirects(HttpClient.Redirect.NEVER)
-                .build(), new ObjectMapper(), properties, credentials, journal);
+                .build(), new ObjectMapper(), properties, credentials, tracking);
     }
 
     DarkMinterClient(HttpClient httpClient, ObjectMapper objectMapper, DarkProperties properties,
-            DarkCredentialService credentials, DarkAttemptJournal journal) {
-        this.journal = java.util.Objects.requireNonNull(journal);
+            DarkCredentialService credentials, DarkAttemptTracking tracking) {
+        this.tracking = java.util.Objects.requireNonNull(tracking);
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
@@ -68,7 +64,7 @@ public class DarkMinterClient {
 
     public ReserveBatchResponse reserveBatch(String authorityId, Batch batch) {
         String normalizedAuthorityId = normalizeRequired(authorityId, "authorityId");
-        var ids = batch.items().stream().map(DarkAttemptJournal.Item::oaiId).toList();
+        var ids = batch.items().stream().map(DarkAttemptTracking.Item::oaiId).toList();
         var request = ReserveBatchRequest.fromClientItemIds(normalizedAuthorityId, batch.naan(), ids);
         return sendModification("POST", "/api/v1/arks/batch", normalizedAuthorityId, request, ReserveBatchResponse.class, batch);
     }
@@ -140,9 +136,9 @@ public class DarkMinterClient {
             builder.setHeader(authHeaderName(), authority);
         }
         HttpRequest request = builder.build();
+        tracking.markPending(reservation ? "RESERVE" : "STAGE", batch);
         try {
-            return journal.send(properties.getMinter().getBaseUrl(), authority, reservation ? "RESERVE" : "STAGE",
-                    batch, () -> sendJsonRequestOnce(request, responseType));
+            return sendJsonRequestOnce(request, responseType);
         } catch (DarkMinterClientException e) {
             if (reservation && isPreReservationRefusal(e)) throw e;
             if (e.isRetryable() || "CLIENT_INTERRUPTED".equals(e.getErrorCode())
@@ -292,7 +288,6 @@ public class DarkMinterClient {
 
     private URI buildUri(String path) {
         String baseUrl = properties.getMinter().getBaseUrl();
-        journal.checkDestination(baseUrl, properties.getAuthorityId());
         String normalizedBase = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         return URI.create(normalizedBase + path);
     }

@@ -15,6 +15,11 @@ import java.time.LocalDateTime;
 
 public interface DarkTrackingRepository extends JpaRepository<DarkTrackingRecord, DarkTrackingRecordId> {
 
+    // Serialize stage and reconciliation for the same NAAN through the end of the page.
+    @Query(value = "select 1 from pg_advisory_xact_lock(hashtext('dark_tracking_record'), hashtext(:naan))",
+            nativeQuery = true)
+    int lockWorkerPage(@Param("naan") String naan);
+
     interface StateCount {
         DarkTrackingState getState();
         long getCount();

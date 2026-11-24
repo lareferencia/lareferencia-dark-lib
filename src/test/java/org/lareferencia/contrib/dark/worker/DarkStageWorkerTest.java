@@ -82,6 +82,7 @@ class DarkStageWorkerTest {
 
     @BeforeEach
     void setUp() {
+        worker.configureAttemptTransactions(mock(org.springframework.transaction.PlatformTransactionManager.class));
         properties.setAuthorityId("authority-1");
         properties.setMetadataSchema("dublin_core");
         properties.setReserveBatchSize(100);
@@ -270,7 +271,8 @@ class DarkStageWorkerTest {
 
         assertThrows(DarkMinterClientException.class, () -> worker.postPage());
         verify(darkMinterClient, never()).stageArk(any(), any(), any());
-        verify(darkTrackingRepository, never()).save(any(DarkTrackingRecord.class));
+        verify(darkTrackingRepository).save(org.mockito.ArgumentMatchers.argThat(row ->
+                row.getLastError().contains("RESERVATION_FAILED")));
     }
 
     @Test

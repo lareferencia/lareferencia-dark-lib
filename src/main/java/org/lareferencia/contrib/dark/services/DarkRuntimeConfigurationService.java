@@ -16,8 +16,6 @@ import jakarta.annotation.PostConstruct;
 /** Persists and applies dARK settings without changing the legacy network model. */
 @Service
 public class DarkRuntimeConfigurationService {
-    private final DarkAttemptJournal journal;
-
     public static final long CONFIGURATION_ID = 1L;
     private final DarkRuntimeConfigurationRepository repository;
     private final ObjectMapper mapper;
@@ -25,8 +23,7 @@ public class DarkRuntimeConfigurationService {
     private final TransactionTemplate transactions;
 
     public DarkRuntimeConfigurationService(DarkRuntimeConfigurationRepository repository, ObjectMapper mapper,
-            DarkProperties properties, PlatformTransactionManager transactionManager, DarkAttemptJournal journal) {
-        this.journal = journal;
+            DarkProperties properties, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.mapper = mapper;
         this.properties = properties;
@@ -91,7 +88,6 @@ public class DarkRuntimeConfigurationService {
                 }
             }
             if (mode.equals("dark2")) validateSignedConfiguration(client);
-            journal.checkDestination(client.path("baseUrl").asText(), client.path("authorityId").asText(""));
             client.set("authentication", merged);
             return save(next, updatedBy);
         }

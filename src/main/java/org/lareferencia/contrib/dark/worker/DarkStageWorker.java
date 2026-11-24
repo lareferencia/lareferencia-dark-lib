@@ -16,7 +16,7 @@ import org.lareferencia.contrib.dark.domain.DarkTrackingState;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.contrib.dark.services.DarkLevel1MetadataService;
 import org.lareferencia.contrib.dark.services.DarkErrorCodec;
-import org.lareferencia.contrib.dark.services.DarkAttemptJournal;
+import org.lareferencia.contrib.dark.services.DarkAttemptTracking;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
 import org.lareferencia.contrib.dark.services.DarkOriginalMetadataTransformerService;
 import org.lareferencia.contrib.dark.services.DarkProperties;
@@ -31,6 +31,10 @@ import org.lareferencia.core.service.management.SnapshotLogService;
 import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -88,6 +92,14 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
     private final DarkErrorCodec darkErrorCodec = new DarkErrorCodec();
 
+    private TransactionTemplate outsidePage;
+
+    @Autowired
+    void configureAttemptTransactions(PlatformTransactionManager manager) {
+        outsidePage = new TransactionTemplate(manager);
+        outsidePage.setPropagationBehavior(TransactionDefinition.PROPAGATION_NOT_SUPPORTED);
+    }
+
     private SnapshotMetadata snapshotMetadata;
     private String currentArkNaan;
     private String currentSourceMetadataSchema;
@@ -117,7 +129,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     protected void preRun() {
         darkMinterClient.requireModificationsEnabled();
         validateConfiguration();
-        darkMinterClient.prepareTracking();
         setPageSize(darkProperties.getStagePageSize());
         resetRunCounters();
         currentArkNaan = null;
@@ -184,7 +195,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
     @Override
     public void prePage() {
-        darkMinterClient.prepareTracking();
+        darkTrackingRepository.lockWorkerPage(currentArkNaan);
         recordsToReserve.clear();
         recordsToStage.clear();
         pageProcessed = 0;
@@ -241,7 +252,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                     + " | " + authorFieldDiagnostics(record)
                     + " | message=" + safeErrorMessage(e));
             persistError(record.getIdentifier(), null, record.getOriginalMetadataHash(),
-                    darkErrorCodec.encode(e, "VALIDATE_PAYLOAD"));
+                    existingRecord != null && darkErrorCodec.hasUnknownOutcome(existingRecord.getLastError())
+                            ? existingRecord.getLastError() : darkErrorCodec.encode(e, "VALIDATE_PAYLOAD"));
             return;
         }
 
@@ -339,10 +351,11 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                     + " | errors=" + pageErrors
                     + " | dominantErrorCount=" + dominantPreparationErrorCount());
         } else {
-            reservePendingRecords();
-            if (!pageHaltedBySystemicError) {
-                stagePendingRecords(recordsToStage);
-            }
+            // Each reply must commit before the next send, even if the surrounding page later rolls back.
+            outsidePage.executeWithoutResult(ignored -> {
+                reservePendingRecords();
+                if (!pageHaltedBySystemicError) stagePendingRecords(recordsToStage);
+            });
         }
         logger.debug(String.format(
                 "DARK stage page | network=%s | page=%s | processed=%s | reserve=%s | stage=%s | unchanged=%s | succeeded=%s | errors=%s | reserveFailed=%s | stageFailed=%s",
@@ -415,11 +428,11 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         return runningContext instanceof DarkManualRunningContext;
     }
 
-    private DarkAttemptJournal.Batch attempt(List<DarkStageCandidate> candidates) {
-        var items = candidates.stream().map(candidate -> new DarkAttemptJournal.Item(
+    private DarkAttemptTracking.Batch attempt(List<DarkStageCandidate> candidates) {
+        var items = candidates.stream().map(candidate -> new DarkAttemptTracking.Item(
                 candidate.getOaiId(), candidate.getArk(), candidate.getStagePayloadHash(), candidate.getSourceMetadataHash(),
                 candidate.getTargetUrl(), runningContext.getNetwork().getId(), snapshotMetadata.getSnapshotId())).toList();
-        return new DarkAttemptJournal.Batch(currentArkNaan, items);
+        return new DarkAttemptTracking.Batch(currentArkNaan, items);
     }
 
     private void reservePendingRecords() {
@@ -440,10 +453,12 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             } catch (ReservationDeferred deferred) {
                 String pending = darkErrorCodec.pendingReservation(deferred.getRetryAt());
                 for (DarkStageCandidate candidate : chunk) {
-                    var record = candidate.getExistingRecord();
+                    var previous = candidate.getExistingRecord();
                     // A definite refusal only describes this attempt. Retain any earlier uncertainty.
-                    if (record == null) record = new DarkTrackingRecord();
-                    if (record.hasArk() || darkErrorCodec.hasUnknownOutcome(record.getLastError())) continue;
+                    if (previous != null && darkErrorCodec.hasUnknownOutcome(previous.getLastError())) continue;
+                    var record = darkTrackingRepository.findById(trackingId(candidate.getOaiId()))
+                            .orElseGet(DarkTrackingRecord::new);
+                    if (record.hasArk()) continue;
                     record.setArkNaan(currentArkNaan);
                     record.setOaiId(candidate.getOaiId());
                     record.setSourceMetadataHash(candidate.getSourceMetadataHash());
@@ -455,16 +470,13 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 logWarn("DARK reservation deferred | records=" + chunk.size() + " | retryAt=" + deferred.getRetryAt());
                 continue;
             } catch (DarkMinterClientException e) {
-                if (DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN.equals(e.getErrorCode())) {
-                    // Stable OAI IDs are retained for recovery through the minter's active batch reservations.
-                    for (DarkStageCandidate candidate : chunk)
-                        persistReservationError(candidate, candidate.getOaiId(), darkErrorCodec.encode(e, "RESERVE"));
+                for (DarkStageCandidate candidate : chunk) {
+                    persistReservationError(candidate, candidate.getOaiId(), darkErrorCodec.encode(e, "RESERVE"));
                 }
                 handleReservationMinterFailure(e);
                 break;
             }
             validateReserveResponse(response);
-            failOnSystemicReservationFailure(response, chunk.size());
             Map<String, ARKResponse> resultsByItemId = new HashMap<>();
             for (ARKResponse result : response.getResults()) {
                 if (result != null && result.getClientItemId() != null) {
@@ -482,11 +494,13 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 }
                 logWarn("DARK stage reservation error for record " + error.getClientItemId() + ": " + error.getError());
                 DarkStageCandidate failedCandidate = findCandidate(chunk, error.getClientItemId());
+                if (failedCandidate == null) continue;
                 persistReservationError(failedCandidate, error.getClientItemId(),
                         darkErrorCodec.encode("REMOTE_PERMANENT", "RESERVATION_FAILED", "RESERVE", null,
                                 false, error.getError(), Map.of()));
             }
 
+            failOnSystemicReservationFailure(response, chunk.size());
             List<DarkStageCandidate> reservedCandidates = new ArrayList<>();
             for (DarkStageCandidate candidate : chunk) {
                 ARKResponse result = resultsByItemId.get(candidate.getOaiId());
@@ -496,13 +510,13 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                     }
                     logWarn("DARK stage reservation returned no ARK for record " + candidate.getOaiId());
                     persistReservationError(candidate, candidate.getOaiId(),
-                            darkErrorCodec.encode("REMOTE_PERMANENT", "RESERVATION_RESULT_MISSING", "RESERVE", null,
+                            darkErrorCodec.encode("REMOTE_TRANSIENT", DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, "RESERVE", null,
                                     false, "ARK reservation did not return a result for the record", Map.of()));
                     continue;
                 }
                 if (result.getArk() == null || result.getArk().isBlank()) {
                     persistReservationError(candidate, candidate.getOaiId(),
-                            darkErrorCodec.encode("REMOTE_PERMANENT", "RESERVATION_ARK_MISSING", "RESERVE", null,
+                            darkErrorCodec.encode("REMOTE_TRANSIENT", DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, "RESERVE", null,
                                     false, "ARK reservation returned a blank ARK", Map.of()));
                     continue;
                 }
@@ -588,14 +602,17 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 validateStageResponse(candidate, response);
                 persistSuccess(candidate, response);
             } catch (DarkMinterClientException e) {
-                if (stageSubmitted && "dark2".equals(darkProperties.getMinter().getAuthentication().getMode())) {
+                if (stageSubmitted) {
                     e = new DarkMinterClientException(e.getStatusCode(), DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN,
                             true, "Minter response could not confirm the submitted stage; reconcile before resending");
                 }
+                var previous = candidate.getExistingRecord();
+                String stageError = previous != null && darkErrorCodec.hasUnknownOutcome(previous.getLastError())
+                        ? previous.getLastError() : darkErrorCodec.encode(e, "STAGE");
                 if (e.isRetryable()) {
                     logError("DARK stage stopping because dARK minter returned a retryable error while staging record "
                             + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
-                    persistRetryableStageFailure(candidate, darkErrorCodec.encode(e, "STAGE"));
+                    persistRetryableStageFailure(candidate, stageError);
                     pageHaltedBySystemicError = true;
                     stop();
                     return;
@@ -603,20 +620,18 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 if (e.isSystemic()) {
                     logError("DARK stage stopping because dARK minter returned a non-retryable systemic error while staging record "
                             + candidate.getOaiId() + " | errorCode=" + e.getErrorCode() + ": " + e.getMessage());
-                    if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
-                        persistReservedFailure(candidate, darkErrorCodec.encode(e, "STAGE"));
-                    }
+                    persistRetryableStageFailure(candidate, stageError);
                     pageHaltedBySystemicError = true;
                     stop();
                     return;
                 }
                 if (candidate.getExistingRecord() == null || !candidate.getExistingRecord().hasArk()) {
                     logWarn("DARK stage failed after reserving ARK " + ark + " for record " + candidate.getOaiId() + ": " + e.getMessage());
-                    persistReservedFailure(candidate, darkErrorCodec.encode(e, "STAGE"));
+                    persistReservedFailure(candidate, stageError);
                 } else {
                     logWarn("DARK stage failed updating ARK " + ark + " for record " + candidate.getOaiId() + ": " + e.getMessage());
                     persistError(candidate.getOaiId(), ark, candidate.getSourceMetadataHash(),
-                            darkErrorCodec.encode(e, "STAGE"));
+                            stageError);
                 }
             }
         }
@@ -655,8 +670,10 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             return false;
         }
 
-        record.setLastError(darkErrorCodec.encode("CONFLICT", "REMOTE_TOMBSTONE", "READ_REMOTE_STATE", null,
-                false, "Remote ARK is tombstoned and cannot be staged", Map.of("remoteState", remoteState.name())));
+        if (!darkErrorCodec.hasUnknownOutcome(record.getLastError())) {
+            record.setLastError(darkErrorCodec.encode("CONFLICT", "REMOTE_TOMBSTONE", "READ_REMOTE_STATE", null,
+                    false, "Remote ARK is tombstoned and cannot be staged", Map.of("remoteState", remoteState.name())));
+        }
         darkTrackingRepository.save(record);
         pageErrors++;
         runErrors++;

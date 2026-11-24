@@ -90,7 +90,7 @@ El módulo dARK del Admin del cosechador integra conexión, claves y activación
 
 Los parámetros operativos se agrupan en **Configuración avanzada**.
 
-Regenerar reemplaza el único par vigente y pausa las reservas y los envíos de metadatos hasta completar nuevamente el registro externo. La pausa se guarda en la base de datos y sobrevive a reinicios. Las lecturas y consultas de estado continúan disponibles. La autoridad y la instalación asociadas al catálogo se conservan al regenerar las claves.
+Regenerar reemplaza el único par vigente y pausa las reservas y los envíos de metadatos hasta completar nuevamente el registro externo. La pausa se guarda en la base de datos y sobrevive a reinicios. Las lecturas y consultas de estado continúan disponibles. Cambiar la autoridad o el destino también exige confirmar de nuevo el registro correspondiente.
 
 ### Almacenamiento del servidor
 
@@ -121,20 +121,8 @@ DARK2 admite HTTP y HTTPS. Si se utiliza HTTP, la interfaz muestra una advertenc
 
 Las modificaciones DARK2 envían los seis encabezados de firma y también `X-Authority-Id` con exactamente la misma autoridad. Esto permite la identidad explícita que el minter exige cuando su verificación de firmas está desactivada. En el servidor, `MINTER_SIGNED_AUTH_ENABLED` determina si se verifica la firma.
 
-### Asociación del catálogo y recuperación de intentos
+### Recuperación tras una caída
 
-Aplicar la migración Flyway `V5.0.0.18` antes de actualizar el cosechador. El primer stage o reconciliación con un catálogo vacío vincula el catálogo a la URL y la autoridad configuradas y asigna un UUID local a la instalación.
+Antes de cada petición de reserva o envío de metadatos, el cosechador confirma una marca pendiente en `last_error` de cada fila de `dark_tracking_record`. Al procesar la respuesta, actualiza esa misma fila. Una reserva confirmada conserva su ARK. Solo una respuesta de stage válida actualiza `stage_payload_hash`.
 
-Si ya hay registros (incluidos los importados), el operador debe verificar el minter y la autoridad que los emitieron. Después de esa verificación se puede hacer la asociación una vez, con los workers detenidos. En PostgreSQL 13 o posterior, sustituir los dos valores de ejemplo por la URL efectiva sin barra final y el ID exacto.
-
-```sql
-UPDATE dark_tracking_installation
-SET installation_id = gen_random_uuid(),
-    base_url = 'https://minter.example.org',
-    authority_id = 'ID-DE-LA-AUTORIDAD'
-WHERE id = 1 AND installation_id IS NULL;
-```
-
-La configuración rechaza un cambio de destino o autoridad de un catálogo vinculado. Si cambia únicamente la URL del mismo minter, detener los workers, verificar su identidad y actualizar `base_url` en la fila existente, conservando su UUID y autoridad. Guardar la nueva URL en el Admin y confirmar el registro DARK2 antes de reanudar. Para otra instalación o autoridad se necesita un catálogo independiente o una migración de datos explícita.
-
-Cada petición de reserva o envío guarda un intento por registro antes de salir. Los miembros del mismo lote comparten `request_id`. Al comenzar stage o reconciliación, el cosechador recupera los resultados que quedaron fuera de la transacción local. Un PUT sin respuesta confirmada queda para revisión manual. Una reserva incierta conserva el OAI ID para recuperar la reserva activa con el mismo `client_item_id`. Esta recuperación depende de que el minter conserve la correlación de la reserva.
+Si el proceso se interrumpe antes de guardar la respuesta, la siguiente ejecución reutiliza el OAI ID para recuperar una reserva que el minter aún mantenga activa. Un stage incierto queda para revisión y reenvío manual. La URL y la autoridad se gestionan desde la configuración dARK. Antes de cambiar de minter, conviene resolver los envíos pendientes contra el destino original.
