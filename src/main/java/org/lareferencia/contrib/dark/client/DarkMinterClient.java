@@ -15,6 +15,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 
 /**
@@ -32,6 +35,10 @@ public class DarkMinterClient {
     private final ObjectMapper objectMapper;
     private final DarkProperties properties;
     private final DarkCredentialService credentials;
+
+    private record ReservationTarget(URI uri, String authority) {}
+    // Access is serialized with credential changes and mutation sends.
+    private final Map<ReservationTarget, Instant> reservationPauses = new HashMap<>();
 
     @Autowired
     public DarkMinterClient(DarkProperties properties, DarkCredentialService credentials) {
@@ -79,27 +86,66 @@ public class DarkMinterClient {
                     .method(method, HttpRequest.BodyPublishers.ofByteArray(body));
             if ("dark2".equals(auth.getMode())) {
                 if (credentials == null) throw new DarkMinterClientException(503, "DARK_CREDENTIAL_UNAVAILABLE", false, "Signing service unavailable");
-                credentials.headers(method, uri, authority, body).forEach(builder::header);
-                // Minters with signature verification disabled use this explicit identity header.
-                builder.header("X-Authority-Id", authority);
-                // One send only. A lost response requires business reconciliation, not another signed attempt.
-                try {
-                    return sendJsonRequestOnce(builder.build(), responseType);
-                } catch (DarkMinterClientException e) {
-                    if (e.isRetryable() || "CLIENT_INTERRUPTED".equals(e.getErrorCode())
-                            || "SIGNED_REQUEST_REPLAY".equals(e.getErrorCode())) {
-                        throw new DarkMinterClientException(e.getStatusCode(), method, uri,
-                                DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true,
-                                "Modification outcome is unknown; reconcile before resending (" + e.getErrorCode() + ")",
-                                e.getResponseBody(), e);
-                    }
-                    throw e;
+                if (method.equals("POST") && path.equals("/api/v1/arks/batch")) {
+                    return sendSignedReservation(uri, authority, body, builder, responseType);
                 }
+                return sendSignedOnce(method, uri, authority, body, builder, responseType, false);
             }
             builder.header(authHeaderName(), authority);
             if (!"legacy".equals(auth.getMode()))
                 throw new DarkMinterClientException(503, "DARK_AUTHENTICATION_MODE_INVALID", false, "Unsupported authentication mode");
             return sendJsonRequest(builder, responseType);
+        }
+    }
+
+    private <T> T sendSignedReservation(URI uri, String authority, byte[] body,
+            HttpRequest.Builder builder, Class<T> responseType) {
+        var target = new ReservationTarget(uri, authority);
+        Instant retryAt = reservationPauses.get(target);
+        if (retryAt != null && Instant.now().isBefore(retryAt)) {
+            throw new ReservationDeferred(retryAt);
+        }
+        reservationPauses.remove(target);
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return sendSignedOnce("POST", uri, authority, body, builder, responseType, true);
+            } catch (DarkMinterClientException e) {
+                if (!isPreReservationRefusal(e)) throw e;
+                if (attempt == 0 && properties.getMinter().getRetry().getMaxRetries() > 0) {
+                    // Keep the page transaction short. Longer waits belong to scheduled staging.
+                    Duration delay = Duration.ofSeconds(Math.min(1, retryDelay(0).toSeconds()));
+                    sleepBeforeRetry(delay, builder.build());
+                    continue;
+                }
+                retryAt = Instant.now().plusSeconds(Math.max(1, retryDelay(attempt).toSeconds()));
+                reservationPauses.put(target, retryAt);
+                throw new ReservationDeferred(retryAt);
+            }
+        }
+    }
+
+    private static boolean isPreReservationRefusal(DarkMinterClientException e) {
+        return e.getStatusCode() == 503 && e.isRetryable()
+                && ReservationDeferred.AUTHORITY_STATUS_UNAVAILABLE.equals(e.getErrorCode());
+    }
+
+    private <T> T sendSignedOnce(String method, URI uri, String authority, byte[] body,
+            HttpRequest.Builder builder, Class<T> responseType, boolean reservation) {
+        // Sign again even for identical bytes: authentication already consumed the previous nonce.
+        credentials.headers(method, uri, authority, body).forEach(builder::setHeader);
+        builder.setHeader("X-Authority-Id", authority);
+        try {
+            return sendJsonRequestOnce(builder.build(), responseType);
+        } catch (DarkMinterClientException e) {
+            if (reservation && isPreReservationRefusal(e)) throw e;
+            if (e.isRetryable() || "CLIENT_INTERRUPTED".equals(e.getErrorCode())
+                    || "SIGNED_REQUEST_REPLAY".equals(e.getErrorCode())) {
+                throw new DarkMinterClientException(e.getStatusCode(), method, uri,
+                        DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, true,
+                        "Modification outcome is unknown; reconcile before resending (" + e.getErrorCode() + ")",
+                        e.getResponseBody(), e);
+            }
+            throw e;
         }
     }
 
@@ -177,7 +223,7 @@ public class DarkMinterClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String errorMessage = extractErrorMessage(body);
                 String errorCode = extractErrorCode(response);
-                boolean retryable = extractRetryable(response) && !errorCode.startsWith("SIGNED_")
+                boolean retryable = extractRetryable(response, errorCode) && !errorCode.startsWith("SIGNED_")
                         && !errorCode.equals("AUTHORITY_MISMATCH");
                 logger.warn("dARK minter rejected request [{} {}] with status {}, errorCode={}, retryable={} and body {}",
                         request.method(), request.uri(), response.statusCode(), errorCode, retryable, body);
@@ -316,10 +362,11 @@ public class DarkMinterClient {
                 .orElse(DarkMinterClientException.UNKNOWN_ERROR_CODE);
     }
 
-    private boolean extractRetryable(HttpResponse<String> response) {
+    private boolean extractRetryable(HttpResponse<String> response, String errorCode) {
         return response.headers()
                 .firstValue(DARK_RETRYABLE_HEADER)
                 .map(value -> value.equalsIgnoreCase("true"))
-                .orElse(response.statusCode() >= 500);
+                .orElse(response.statusCode() >= 500
+                        && !ReservationDeferred.AUTHORITY_STATUS_UNAVAILABLE.equals(errorCode));
     }
 }

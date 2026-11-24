@@ -158,6 +158,51 @@ class DarkStageWorkerTest {
     }
 
     @Test
+    void scheduledPassResumesDeferredBatchWithOriginalIds() throws Exception {
+        var id = "oai:deferred:1";
+        var item = OAIRecord.create(id, null, "hash", false);
+        var rows = new java.util.HashMap<DarkTrackingRecordId, DarkTrackingRecord>();
+        when(darkTrackingRepository.findById(any())).thenAnswer(call -> Optional.ofNullable(rows.get(call.getArgument(0))));
+        when(darkTrackingRepository.save(any())).thenAnswer(call -> {
+            DarkTrackingRecord row = call.getArgument(0);
+            rows.put(row.getId(), row);
+            return row;
+        });
+        when(metadataStore.getMetadata(any(), any())).thenReturn("<metadata/>");
+        when(darkOriginalMetadataTransformerService.transformForMinter(any(), any(), any(), any(), any()))
+                .thenReturn("<metadata/>");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/1");
+        when(level1MetadataService.buildMinimalMetadata(any(), any(), any())).thenReturn(Map.of("title", "Test"));
+        var deferred = mock(org.lareferencia.contrib.dark.client.ReservationDeferred.class);
+        var deadline = java.time.Instant.now().plusSeconds(60);
+        when(deferred.getRetryAt()).thenReturn(deadline);
+        var ark = new ARKResponse();
+        ark.setArk("ark:12345/example");
+        ark.setState(DarkRemoteState.DRAFT);
+        ark.setClientItemId(id);
+        var reserved = new ReserveBatchResponse();
+        reserved.setResults(List.of(ark));
+        when(darkMinterClient.reserveBatch("authority-1", "12345", List.of(id))).thenThrow(deferred).thenReturn(reserved);
+        when(darkMinterClient.stageArk(eq(ark.getArk()), any())).thenReturn(ark);
+
+        worker.prePage(); worker.processItem(item); worker.postPage();
+        var row = rows.get(DarkTrackingRecordId.of("12345", id));
+        assertTrue(row.getLastError().contains("RESERVATION_PENDING"));
+        assertEquals(1, rows.size());
+        worker.prePage(); worker.processItem(item); worker.postPage();
+        verify(darkMinterClient, times(1)).reserveBatch(any(), any(), any());
+        // Advance the persisted deadline, as on a later scheduled pass.
+        row.setLastError(new org.lareferencia.contrib.dark.services.DarkErrorCodec()
+                .pendingReservation(java.time.Instant.EPOCH));
+        worker.prePage(); worker.processItem(item); worker.postPage();
+        verify(darkMinterClient, times(2)).reserveBatch("authority-1", "12345", List.of(id));
+        verify(darkMinterClient, times(1)).stageArk(eq(ark.getArk()), any());
+        assertEquals(1, rows.size());
+        assertEquals(DarkTrackingState.DRAFT, row.getState());
+        org.junit.jupiter.api.Assertions.assertNull(row.getLastError());
+    }
+
+    @Test
     @DisplayName("Skip remote calls when tracking payload is unchanged")
     void skipsUnchangedTrackedRecord() throws Exception {
         OAIRecord record = OAIRecord.create("oai:test:2", null, "hash-2", false);

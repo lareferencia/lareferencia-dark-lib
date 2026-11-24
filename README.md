@@ -109,7 +109,9 @@ Esta implementación usa permisos POSIX y está prevista para una única instanc
 
 ### Peticiones y recuperación
 
-Las reservas batch y los PUT de metadatos llevan firma DARK2. El cuerpo JSON se serializa una sola vez y se firma el buffer enviado. Las modificaciones DARK2 no se reintentan en el cliente HTTP; las lecturas conservan el backoff configurado. El proxy debe preservar path y query y el reloj del servidor debe estar sincronizado.
+Las reservas batch y los PUT de metadatos llevan firma DARK2. El cuerpo JSON se serializa una sola vez y se firma el buffer enviado. Las lecturas conservan el backoff configurado. Para una reserva firmada, el cliente admite un segundo envío únicamente cuando Minter responde 503 con `X-DARK-Error-Code: AUTHORITY_STATUS_UNAVAILABLE` y `X-DARK-Retryable: true`. Usa los mismos OAI IDs y firma de nuevo con otro nonce. El proxy debe preservar path y query y el reloj del servidor debe estar sincronizado.
+
+Si ese rechazo persiste, el cliente pausa las reservas de esa autoridad y ese Minter. El seguimiento conserva cada OAI ID afectado con `RESERVATION_PENDING` y la hora UTC `retryAt`. La pasada de stage puede continuar con los registros que ya tienen ARK. La próxima pasada programada que encuentre el registro una vez vencida la espera retoma la reserva. Esto requiere tener stage programado. El primer reintento usa el primer backoff, limitado a un segundo; la pausa posterior usa el siguiente valor configurado, con un mínimo de un segundo. Con `maxRetries=0` se pasa directamente a la pausa.
 
 Una respuesta perdida de stage se registra como `MODIFICATION_OUTCOME_UNKNOWN`. Ese registro queda excluido de nuevos envíos automáticos hasta una revisión y un envío manual explícitos; leer el estado remoto no confirma qué payload se aceptó. La interfaz advierte antes del envío manual. Las reservas batch conservan los OAI IDs como `client_item_id` para recuperar las reservas activas en una ejecución posterior.
 

@@ -8,6 +8,7 @@ import org.lareferencia.contrib.dark.client.DarkMinterClient;
 import org.lareferencia.contrib.dark.client.DarkMinterClientException;
 import org.lareferencia.contrib.dark.client.DarkRemoteState;
 import org.lareferencia.contrib.dark.client.ReserveBatchResponse;
+import org.lareferencia.contrib.dark.client.ReservationDeferred;
 import org.lareferencia.contrib.dark.client.StageArkRequest;
 import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
 import org.lareferencia.contrib.dark.domain.DarkTrackingRecordId;
@@ -30,6 +31,7 @@ import org.lareferencia.core.worker.BaseBatchWorker;
 import org.lareferencia.core.worker.NetworkRunningContext;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -215,6 +217,11 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
             persistError(record.getIdentifier(), null, record.getOriginalMetadataHash(),
                     darkErrorCodec.encode("VALIDATION", "ARK_REQUIRED", "VALIDATE_REMOTE_STATE", null,
                             false, "Manual staging cannot reserve an ARK; reconcile or use the scheduled reservation flow first", Map.of()));
+            return;
+        }
+
+        if (existingRecord != null && !existingRecord.hasArk()
+                && darkErrorCodec.reservationWaiting(existingRecord.getLastError(), Instant.now())) {
             return;
         }
 
@@ -422,6 +429,23 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                         darkProperties.getAuthorityId(),
                         currentArkNaan,
                         chunk.stream().map(DarkStageCandidate::getOaiId).toList());
+            } catch (ReservationDeferred deferred) {
+                String pending = darkErrorCodec.pendingReservation(deferred.getRetryAt());
+                for (DarkStageCandidate candidate : chunk) {
+                    var record = candidate.getExistingRecord();
+                    // A definite refusal only describes this attempt. Retain any earlier uncertainty.
+                    if (record == null) record = new DarkTrackingRecord();
+                    if (record.hasArk() || darkErrorCodec.hasUnknownOutcome(record.getLastError())) continue;
+                    record.setArkNaan(currentArkNaan);
+                    record.setOaiId(candidate.getOaiId());
+                    record.setSourceMetadataHash(candidate.getSourceMetadataHash());
+                    applySourceProvenance(record);
+                    record.setState(DarkTrackingState.ERROR);
+                    record.setLastError(pending);
+                    darkTrackingRepository.save(record);
+                }
+                logWarn("DARK reservation deferred | records=" + chunk.size() + " | retryAt=" + deferred.getRetryAt());
+                continue;
             } catch (DarkMinterClientException e) {
                 if (DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN.equals(e.getErrorCode())) {
                     // Stable OAI IDs are retained for recovery through the minter's active batch reservations.

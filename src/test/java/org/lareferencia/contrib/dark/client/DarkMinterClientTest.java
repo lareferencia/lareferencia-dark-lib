@@ -41,10 +41,11 @@ class DarkMinterClientTest {
         properties.getMinter().getAuthentication().setMode("dark2");
         properties.getMinter().getAuthentication().setRegistrationStatus("enabled");
         var http = mock(HttpClient.class);
-        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenAnswer(call -> mockResponse(200, "{\"results\":[],\"errors\":[]}"));
+        var refused = mockResponse(503, "{}", Map.of(
+                "X-DARK-Error-Code", List.of("AUTHORITY_STATUS_UNAVAILABLE"), "X-DARK-Retryable", List.of("true")));
+        var accepted = mockResponse(200, "{\"results\":[],\"errors\":[]}");
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(refused, accepted);
         var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
-        client.reserveBatch("authority-1", "12345", List.of("oai:áñ:1"));
         client.reserveBatch("authority-1", "12345", List.of("oai:áñ:1"));
         ArgumentCaptor<HttpRequest> requests = ArgumentCaptor.forClass(HttpRequest.class);
         verify(http, times(2)).send(requests.capture(), any(HttpResponse.BodyHandler.class));
@@ -80,7 +81,8 @@ class DarkMinterClientTest {
         var http = mock(HttpClient.class);
         when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenThrow(new java.io.IOException("response lost"));
         var client = new DarkMinterClient(http, new ObjectMapper(), properties, credentials);
-        assertThrows(DarkMinterClientException.class, () -> client.reserveBatch("authority-1", "12345", List.of("oai:1")));
+        assertEquals(DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, assertThrows(DarkMinterClientException.class,
+                () -> client.reserveBatch("authority-1", "12345", List.of("oai:1"))).getErrorCode());
         verify(http, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         properties.getMinter().getAuthentication().setRegistrationStatus("pending_registration");
         assertEquals("DARK_AUTHENTICATION_PAUSED", assertThrows(DarkMinterClientException.class,
@@ -90,6 +92,43 @@ class DarkMinterClientTest {
         org.mockito.Mockito.doReturn(readResponse).when(http).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         client.getArkStatuses(List.of("ark:12345/abc"));
         verify(credentials, times(1)).headers(any(), any(), any(), any());
+    }
+
+    @Test
+    void persistentAuthorityFailurePausesOnlyThatAuthoritysReservations() throws Exception {
+        var config = properties();
+        config.getMinter().getAuthentication().setMode("dark2");
+        config.getMinter().getAuthentication().setRegistrationStatus("enabled");
+        config.getMinter().getRetry().setBackoffSeconds(List.of(0L, 60L));
+        var credentials = mock(org.lareferencia.contrib.dark.services.DarkCredentialService.class);
+        when(credentials.headers(any(), any(), any(), any())).thenReturn(Map.of());
+        var http = mock(HttpClient.class);
+        var refused = mockResponse(503, "{}", Map.of("X-DARK-Error-Code", List.of("AUTHORITY_STATUS_UNAVAILABLE"),
+                "X-DARK-Retryable", List.of("true")));
+        var success = mockResponse(200, "{\"results\":[]}");
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(refused, refused, success);
+        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials);
+        var paused = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", "12345", List.of("id")));
+        var later = assertThrows(ReservationDeferred.class, () -> client.reserveBatch("a", "12345", List.of("different")));
+        assertEquals(paused.getRetryAt(), later.getRetryAt());
+        client.reserveBatch("b", "12345", List.of("id"));
+        verify(http, times(3)).send(any(), any());
+    }
+
+    @Test
+    void unmarkedGateway503RemainsUnknownEvenWithMatchingDetail() throws Exception {
+        var config = properties();
+        config.getMinter().getAuthentication().setMode("dark2");
+        config.getMinter().getAuthentication().setRegistrationStatus("enabled");
+        var credentials = mock(org.lareferencia.contrib.dark.services.DarkCredentialService.class);
+        var http = mock(HttpClient.class);
+        var response = mockResponse(503, "{\"detail\":\"AUTHORITY_STATUS_UNAVAILABLE\"}");
+        when(http.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+        var client = new DarkMinterClient(http, new ObjectMapper(), config, credentials);
+        var error = assertThrows(DarkMinterClientException.class,
+                () -> client.reserveBatch("a", "12345", List.of("id")));
+        assertEquals(DarkMinterClientException.MODIFICATION_OUTCOME_UNKNOWN, error.getErrorCode());
+        verify(http).send(any(), any());
     }
 
     @Test

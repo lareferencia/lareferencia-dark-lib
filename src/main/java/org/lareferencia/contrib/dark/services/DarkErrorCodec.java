@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.time.Instant;
 
 /**
  * Encodes the current dARK tracking error without changing the tracking schema.
@@ -42,6 +43,22 @@ public class DarkErrorCodec {
         }
 
         return encode(category, code, phase, httpStatus, retryable, error.getMessage(), Map.of());
+    }
+
+    public String pendingReservation(Instant retryAt) {
+        return encode("REMOTE_TRANSIENT", "RESERVATION_PENDING", "RESERVE", 503, true,
+                "Waiting to retry authority verification", Map.of("retryAt", retryAt.toString()));
+    }
+
+    public boolean reservationWaiting(String error, Instant now) {
+        if (error == null || error.isBlank()) return false;
+        try {
+            var value = objectMapper.readTree(error);
+            return value != null && "RESERVATION_PENDING".equals(value.path("code").asText())
+                    && now.isBefore(Instant.parse(value.path("details").path("retryAt").asText()));
+        } catch (JsonProcessingException | java.time.format.DateTimeParseException e) {
+            return false;
+        }
     }
 
     public boolean hasUnknownOutcome(String error) {
