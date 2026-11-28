@@ -62,6 +62,13 @@ would import. Imported rows preserve their existing ARK and enter `UPDATE`
 state with no payload hash, so their first `DARK_STAGE_ACTION` sends the full
 metadata to dARK without reserving a new ARK.
 
+Scheduled staging compares a published record's stored SHA-256 with the digest
+of its target URL, Level 1 metadata, original metadata, deposit schema and
+media type. The hash uses UTF-8 JSON with object keys sorted at every depth.
+List order and original metadata text are significant. Records with a hash from
+the previous algorithm can be staged once again on their next scheduled run.
+See the [local IBICT pilot evidence](docs/evidence/ibict-stage-fingerprint-20261128.json).
+
 The importer extracts `ark_naan` from the ARK, maps the legacy dates to
 `created_at` and `updated_at`, and preserves `itemurl` as `target_url`. It
 rejects duplicate CSV mappings and stops on conflicts with an existing local

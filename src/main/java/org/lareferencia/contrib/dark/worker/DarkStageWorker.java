@@ -1,6 +1,8 @@
 package org.lareferencia.contrib.dark.worker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.lareferencia.contrib.dark.client.ARKResponse;
@@ -38,7 +40,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -53,7 +54,8 @@ import java.util.Set;
 public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningContext> {
 
     private static final Logger logger = LogManager.getLogger(DarkStageWorker.class);
-    private static final ObjectMapper PAYLOAD_MAPPER = new ObjectMapper();
+    private static final ObjectWriter HASH_WRITER = new ObjectMapper().writer()
+            .with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private static final int SYSTEMIC_PREPARATION_MIN_RECORDS = 20;
     private static final double SYSTEMIC_PREPARATION_ERROR_RATIO = 0.90d;
 
@@ -778,16 +780,16 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     }
 
     private String calculateStagePayloadHash(StageArkRequest request) throws Exception {
-        Map<String, Object> payload = new java.util.LinkedHashMap<>();
-        payload.put("mappingVersion", DarkLevel1MetadataService.MAPPING_VERSION);
-        payload.put("sourceSchema", currentSourceMetadataSchema);
+        // Fingerprint the deposit with unordered JSON object keys, including maps
+        // nested inside lists. List order and the original metadata text are significant.
+        Map<String, Object> payload = new HashMap<>();
         payload.put("targetSchema", request.getMetadataSchema());
         payload.put("metadataMediaType", request.getMetadataMediaType());
         payload.put("targetUrl", request.getTarget());
         payload.put("minimalMetadata", request.getMinimalMetadata());
         payload.put("originalMetadata", request.getOriginalMetadata());
         byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(PAYLOAD_MAPPER.writeValueAsString(payload).getBytes(StandardCharsets.UTF_8));
+                .digest(HASH_WRITER.writeValueAsBytes(payload));
         return HexFormat.of().formatHex(digest);
     }
 

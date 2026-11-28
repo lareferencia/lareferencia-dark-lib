@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-28",
+  "scope": "Local scheduled-stage rehearsal with a migrated IBICT ARK, PostgreSQL, a signed Java Minter client, isolated Anvil and filesystem storage.",
+  "ark": "ark:41046/001300000001r",
+  "initial_target": "https://repositorio.ufrn.br/handle/123456789/48032",
+  "updated_target": "https://hdl.handle.net/123456789/48032",
+  "original_metadata": {
+    "format": "XOAI",
+    "bytes": 13422,
+    "sha256": "52ddbab5daf5339c4b621abcf9525d43689ea7b0bb7f2f5dd6a89593e982bf4a"
+  },
+  "initial_stage_payload_hash": "934319044a4c072f560c960c4542c6bbe07fdaf8c383a594d859cb08a92ce67b",
+  "updated_stage_payload_hash": "dd11850b3d6b2ab060192e6a86197e5227c5d233ae9c62d84e37d1c7081c8f3b",
+  "restarts_with_identical_original_target": 4,
+  "observed_key_orders": [
+    [
+      "schema",
+      "value"
+    ],
+    [
+      "value",
+      "schema"
+    ]
+  ],
+  "stages": [
+    {
+      "stage": "baseline",
+      "put_delta": 0,
+      "chain_update_delta": 0,
+      "ark_count": 1
+    },
+    {
+      "stage": "first_stage",
+      "put_delta": 1,
+      "chain_update_delta": 1,
+      "ark_count": 1
+    },
+    {
+      "stage": "new_jvm_same_payload",
+      "put_delta": 0,
+      "chain_update_delta": 0,
+      "ark_count": 1
+    },
+    {
+      "stage": "url_only",
+      "put_delta": 1,
+      "chain_update_delta": 1,
+      "ark_count": 1
+    },
+    {
+      "stage": "new_jvm_same_new_url",
+      "put_delta": 0,
+      "chain_update_delta": 0,
+      "ark_count": 1
+    }
+  ],
+  "changed_fields_on_wire": [
+    "target"
+  ],
+  "other_fields_sha256": "bb0bc76c2f5cf2ee93591936d906e048c34c22d85e31636042a1119a82118f95",
+  "owner_preserved": true,
+  "creation_preserved": true,
+  "new_arks": 0,
+  "final_tracking_state": "PUBLISHED",
+  "resolver": {
+    "redirect_status": 302,
+    "location": "https://hdl.handle.net/123456789/48032",
+    "info_status": 200,
+    "original_status": 200,
+    "original_sha256": "52ddbab5daf5339c4b621abcf9525d43689ea7b0bb7f2f5dd6a89593e982bf4a"
+  },
+  "rc6_pre_verification": {
+    "base": "8e93607581935ed3294ff37bed852812c0142d76",
+    "method": "The candidate hash implementation replayed the seven captured requests in separate JVMs. All matched the two digests from the end-to-end rehearsal.",
+    "requests_verified": 7,
+    "dark_module_tests_passed": 73
+  }
+}

@@ -33,6 +33,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -507,6 +508,48 @@ class DarkStageWorkerTest {
     }
 
     @Test
+    void stageHashIgnoresObjectKeyOrderAtEveryDepthButPreservesListOrder() {
+        var identifier = new LinkedHashMap<String, String>();
+        identifier.put("schema", "handle");
+        identifier.put("value", "123/456");
+        var reversedIdentifier = new LinkedHashMap<String, String>();
+        reversedIdentifier.put("value", "123/456");
+        reversedIdentifier.put("schema", "handle");
+
+        var metadata = new LinkedHashMap<String, Object>();
+        metadata.put("alternate_identifiers", List.of(identifier));
+        metadata.put("authors", List.of("Ada", "Sam"));
+        var reordered = new LinkedHashMap<String, Object>();
+        reordered.put("authors", List.of("Ada", "Sam"));
+        reordered.put("alternate_identifiers", List.of(reversedIdentifier));
+
+        String url = "https://example.org/item";
+        String hash = hashFor(metadata, url);
+        assertEquals(hash, hashFor(reordered, url));
+        reordered.put("authors", List.of("Sam", "Ada"));
+        assertNotEquals(hash, hashFor(reordered, url));
+    }
+
+    @Test
+    void stageHashUsesPublishedValuesAcrossSourceSchemas() {
+        var request = StageArkRequest.builder()
+                .target("https://example.org/item").minimalMetadata(Map.of("title", "One"))
+                .originalMetadata("<record/>").metadataSchema("xoai").metadataMediaType("application/xml").build();
+        String hash = hashFor(request);
+        ReflectionTestUtils.setField(worker, "currentSourceMetadataSchema", "other-source");
+        assertEquals(hash, hashFor(request));
+
+        request.setOriginalMetadata("<record />");
+        assertNotEquals(hash, hashFor(request));
+        request.setOriginalMetadata("<record/>");
+        request.setMetadataSchema("other-schema");
+        assertNotEquals(hash, hashFor(request));
+        request.setMetadataSchema("xoai");
+        request.setMetadataMediaType("text/xml");
+        assertNotEquals(hash, hashFor(request));
+    }
+
+    @Test
     @DisplayName("Stage payload hash changes when derived target changes")
     void payloadHashIncludesDerivedTarget() {
         Map<String, Object> metadata = Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026);
@@ -542,6 +585,10 @@ class DarkStageWorkerTest {
     private String hashFor(Map<String, Object> metadata, String target) {
         var request = StageArkRequest.builder().originalMetadata("<metadata/>").minimalMetadata(metadata)
                 .target(target).metadataSchema("dublin_core").metadataMediaType(properties.getMetadataMediaType()).build();
+        return hashFor(request);
+    }
+
+    private String hashFor(StageArkRequest request) {
         return ReflectionTestUtils.invokeMethod(worker, "calculateStagePayloadHash", request);
     }
 
