@@ -30,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -479,6 +480,48 @@ class DarkStageWorkerTest {
 
         verify(darkTrackingRepository, times(1)).save(any(DarkTrackingRecord.class));
         verify(darkMinterClient, never()).stageArk(any(), any());
+    }
+
+    @Test
+    void stageHashIgnoresObjectKeyOrderAtEveryDepthButPreservesListOrder() {
+        var identifier = new LinkedHashMap<String, String>();
+        identifier.put("schema", "handle");
+        identifier.put("value", "123/456");
+        var reversedIdentifier = new LinkedHashMap<String, String>();
+        reversedIdentifier.put("value", "123/456");
+        reversedIdentifier.put("schema", "handle");
+
+        var metadata = new LinkedHashMap<String, Object>();
+        metadata.put("alternate_identifiers", List.of(identifier));
+        metadata.put("authors", List.of("Ada", "Sam"));
+        var reordered = new LinkedHashMap<String, Object>();
+        reordered.put("authors", List.of("Ada", "Sam"));
+        reordered.put("alternate_identifiers", List.of(reversedIdentifier));
+
+        String url = "https://example.org/item";
+        String hash = hashFor("<metadata/>", metadata, url);
+        assertEquals(hash, hashFor("<metadata/>", reordered, url));
+        reordered.put("authors", List.of("Sam", "Ada"));
+        assertNotEquals(hash, hashFor("<metadata/>", reordered, url));
+    }
+
+    @Test
+    void stageHashTracksDepositedMetadataAndFormatAcrossSourceSchemas() {
+        var metadata = Map.<String, Object>of("title", "One");
+        String target = "https://example.org/item";
+        String hash = hashFor("<record/>", metadata, target);
+        ReflectionTestUtils.setField(worker, "currentSourceMetadataSchema", "other-source");
+        assertEquals(hash, hashFor("<record/>", metadata, target));
+        assertNotEquals(hash, hashFor("<record />", metadata, target));
+        properties.setMetadataSchema("other-schema");
+        assertNotEquals(hash, hashFor("<record/>", metadata, target));
+        properties.setMetadataSchema("dublin_core");
+        properties.setMetadataMediaType("text/xml");
+        assertNotEquals(hash, hashFor("<record/>", metadata, target));
+    }
+
+    private String hashFor(String original, Map<String, Object> metadata, String target) {
+        return ReflectionTestUtils.invokeMethod(worker, "calculateStagePayloadHash", original, metadata, target);
     }
 
     @Test
