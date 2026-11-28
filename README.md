@@ -23,6 +23,12 @@ Las reglas de un transformador elegido deben escribir el título en `dark.title`
 
 La petición al minter también requiere autoridad, URL de destino y XML L2. Para publicar un L1 sin autor o año, el minter y el resolver de destino deben admitir esos campos ausentes. La vista previa puede comprobarse antes de habilitar la publicación en ese destino.
 
+### Evaluar una colección antes del minting
+
+En **Identificadores dARK → Evaluación de colecciones**, elige una red para ver su última cosecha terminada y el número de registros activos. Puedes probar el mapeo integrado o elegir un transformador distinto del guardado en **Configuración**. La evaluación usa la preparación del envío sobre el catálogo completo, incluidos registros sin seguimiento. Se ejecuta en segundo plano y no reserva ARKs ni modifica la configuración.
+
+El resultado incluye el porcentaje preparable, el primer motivo de fallo de cada registro y hasta cinco identificadores OAI por motivo. La cobertura de autores, año, tipo y derechos se calcula sobre los preparables. **Gestión de ARKs** reúne las acciones sobre ARKs existentes. El enlace de una evaluación permite volver a su resultado mientras siga en la memoria del cosechador.
+
 The worker settings use nested configuration:
 
 ```properties

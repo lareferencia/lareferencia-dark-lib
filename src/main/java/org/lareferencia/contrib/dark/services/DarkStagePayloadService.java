@@ -9,7 +9,7 @@ import org.lareferencia.core.worker.validation.ITransformer;
 import org.lareferencia.core.worker.validation.ValidationException;
 import org.springframework.stereotype.Service;
 
-/** Prepares the same minter request for a preview and a worker page. */
+/** Shared deposit preparation for previews, collection evaluations and submissions. */
 @Service
 public class DarkStagePayloadService {
     private final DarkProperties properties;
@@ -31,25 +31,50 @@ public class DarkStagePayloadService {
         return profiles.load(id);
     }
 
+    record DepositFormat(String source, String target, String mediaType) {}
+
+    DepositFormat depositFormat(ITransformer profile, String source, String target) {
+        if (source == null || source.isBlank() || target == null || target.isBlank() || target.codePointCount(0, target.length()) > 50) {
+            throw new IllegalStateException("A source schema and a deposit schema of up to 50 characters are required");
+        }
+        String mediaType = properties.getMetadataMediaType();
+        String baseType = mediaType == null ? "" : mediaType.split(";", 2)[0].trim();
+        if (baseType.isBlank() || baseType.codePointCount(0, baseType.length()) > 255) {
+            throw new IllegalStateException("The base MIME type must contain 1 to 255 characters");
+        }
+        if (profile == null && !"xoai".equalsIgnoreCase(source) && !"xoai".equalsIgnoreCase(target)) {
+            throw new IllegalStateException("Level 1 extraction requires XOAI source or target metadata schema"
+                    + " (source=" + source + ", target=" + target + ")");
+        }
+        return new DepositFormat(source, target, mediaType);
+    }
+
     public StageArkRequest prepare(ITransformer profile, SnapshotMetadata snapshot, OAIRecord record,
             String original, String sourceSchema, String targetSchema) throws OAIRecordMetadataParseException, ValidationException {
+        return prepare(profile, snapshot, record, original, depositFormat(profile, sourceSchema, targetSchema));
+    }
+
+    StageArkRequest prepare(ITransformer profile, SnapshotMetadata snapshot, OAIRecord record, String original,
+            DepositFormat format) throws OAIRecordMetadataParseException, ValidationException {
         String id = record.getIdentifier();
+        String sourceSchema = format.source();
+        String targetSchema = format.target();
         String level2 = formats.transformForMinter(id, record.getDatestamp(), original, sourceSchema, targetSchema);
+        if (level2 == null || level2.isBlank()) {
+            throw new DarkPreparationException(DarkPreparationException.Reason.TRANSFORMATION, "Empty deposit metadata");
+        }
         String xoai;
         if ("xoai".equalsIgnoreCase(sourceSchema)) {
             xoai = original;
         } else if ("xoai".equalsIgnoreCase(targetSchema)) {
             xoai = level2;
-        } else if (profile != null) {
-            xoai = formats.transformForMinter(id, record.getDatestamp(), original, sourceSchema, "xoai");
         } else {
-            throw new IllegalStateException("Level 1 extraction requires XOAI source or target metadata schema"
-                    + " (source=" + sourceSchema + ", target=" + targetSchema + ")");
+            xoai = formats.transformForMinter(id, record.getDatestamp(), original, sourceSchema, "xoai");
         }
 
         var metadata = new OAIRecordMetadata(id, xoai);
         String target = urls.extractBestUrl(metadata);
-        if (target == null || target.isBlank()) throw new IllegalStateException("No target URL could be extracted");
+        if (target == null || target.isBlank()) throw new DarkPreparationException(DarkPreparationException.Reason.MISSING_TARGET, "No target URL could be extracted");
         var level1 = profile == null ? builtIn.buildMinimalMetadata(id, metadata, target)
                 : profiles.transform(profile, snapshot, record, metadata, target);
         return StageArkRequest.builder()
@@ -58,7 +83,7 @@ public class DarkStagePayloadService {
                 .minimalMetadata(level1)
                 .originalMetadata(level2)
                 .metadataSchema(targetSchema)
-                .metadataMediaType(properties.getMetadataMediaType())
+                .metadataMediaType(format.mediaType())
                 .build();
     }
 }

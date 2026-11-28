@@ -34,10 +34,12 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
     private final SnapshotMetadata snapshotMetadata;
     private final CatalogDatabaseManager dbManager;
     private final List<String> selectedOaiIds;
+    private DataSource dataSource;
 
     private int pageSize = 100;
     private int maxPages = 0;
     private int currentPage = 0;
+    private String lastId;
     private int totalPages = 0;
     private long totalCount = 0;
     private boolean initialized = false;
@@ -51,6 +53,17 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
         this.snapshotMetadata = snapshotMetadata;
         this.dbManager = dbManager;
         this.selectedOaiIds = selectedOaiIds == null ? List.of() : selectedOaiIds.stream().distinct().toList();
+    }
+
+    public static CatalogRecordPaginator readOnly(SnapshotMetadata snapshot, CatalogDatabaseManager catalog) {
+        var pages = new CatalogRecordPaginator(snapshot, catalog);
+        pages.dataSource = catalog.readOnlyDataSource(snapshot);
+        return pages;
+    }
+
+    public long getTotalCount() {
+        ensureInitialized();
+        return totalCount;
     }
 
     @Override
@@ -67,7 +80,8 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
     @Override
     public Page<OAIRecord> nextPage() {
         ensureInitialized();
-        List<OAIRecord> records = queryPage(currentPage, pageSize);
+        List<OAIRecord> records = queryPage(pageSize);
+        if (!records.isEmpty()) lastId = records.get(records.size() - 1).getId();
         Page<OAIRecord> page = new PageImpl<>(records, PageRequest.of(currentPage, pageSize), totalCount);
         currentPage++;
         return page;
@@ -94,7 +108,10 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
         }
 
         try {
-            dbManager.openSnapshotForRead(snapshotMetadata);
+            if (dataSource == null) {
+                dbManager.openSnapshotForRead(snapshotMetadata);
+                dataSource = dbManager.getDataSource(snapshotMetadata.getSnapshotId());
+            }
         } catch (IOException e) {
             throw new PaginatorException("Unable to open catalog snapshot for dARK staging: " + e.getMessage(), e);
         }
@@ -110,27 +127,23 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
     }
 
     private long executeCount() {
-        DataSource dataSource = dbManager.getDataSource(snapshotMetadata.getSnapshotId());
         if (dataSource == null) {
             return 0;
         }
 
         String sql = "SELECT COUNT(*) FROM oai_record WHERE deleted = 0" + selectedClause();
         try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql);
-        ) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
             bindSelectedOaiIds(statement, 1);
-            ResultSet resultSet = statement.executeQuery();
-            try (resultSet) {
-            return resultSet.next() ? resultSet.getLong(1) : 0;
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong(1) : 0;
             }
         } catch (SQLException e) {
             throw new PaginatorException("Unable to count harvested records for dARK staging", e);
         }
     }
 
-    private List<OAIRecord> queryPage(int page, int size) {
-        DataSource dataSource = dbManager.getDataSource(snapshotMetadata.getSnapshotId());
+    private List<OAIRecord> queryPage(int size) {
         if (dataSource == null) {
             return List.of();
         }
@@ -142,14 +155,14 @@ public class CatalogRecordPaginator implements IPaginator<OAIRecord> {
                 WHERE deleted = 0
                 %s
                 ORDER BY id
-                LIMIT ? OFFSET ?
-                """.formatted(selectedClause());
+                LIMIT ?
+                """.formatted(selectedClause() + (lastId == null ? "" : " AND id > ?"));
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
-                int nextParameter = bindSelectedOaiIds(statement, 1);
-                statement.setInt(nextParameter++, size);
-                statement.setInt(nextParameter, page * size);
+            int nextParameter = bindSelectedOaiIds(statement, 1);
+            if (lastId != null) statement.setString(nextParameter++, lastId);
+            statement.setInt(nextParameter, size);
 
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
