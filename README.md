@@ -13,7 +13,9 @@ fallback. Values formatted as `Name|||ORCID` are sent as `Name`.
 
 ### Elegir el transformador L1
 
-Importa [dARK L1 · Base v1](src/main/resources/transformers/dark-l1-base-v1.json) desde **Transformadores** en el admin. Abre **Identificadores dARK → Configuración del minter**, pulsa **Editar**, elige el **Transformador L1** y guarda. También puedes clonar la plantilla y ajustar las reglas a los metadatos de tu instalación. La opción de mapeo integrado conserva el comportamiento de las instalaciones anteriores.
+Si no eliges un transformador L1, el cosechador usa el mapeo integrado. Solo exige un título con contenido para previsualizar y enviar el L1. Incluye los autores y el año cuando puede extraerlos del registro.
+
+Para personalizar el mapeo, importa [dARK L1 · Base v1](src/main/resources/transformers/dark-l1-base-v1.json) desde **Transformadores** en el admin. Abre **Identificadores dARK → Configuración del minter**, pulsa **Editar**, elige el **Transformador L1** y guarda. También puedes clonar la plantilla y ajustar las reglas a los metadatos de tu instalación.
 
 La vista previa y el envío aplican las mismas reglas a una copia XOAI del registro de origen. El XML L2 y el identificador de seguimiento se conservan. El perfil base recoge título, autorías explícitas, fechas, tipo y derechos. El único campo bibliográfico obligatorio del perfil es un título con contenido. Las fechas se evalúan por orden de publicación, creación y fecha genérica. Si el grupo elegido contiene años distintos, se omite el año. El tipo admite una URI COAR, una equivalencia conocida o un literal local.
 

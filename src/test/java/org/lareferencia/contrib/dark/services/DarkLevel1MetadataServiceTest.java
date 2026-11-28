@@ -126,13 +126,39 @@ class DarkLevel1MetadataServiceTest {
     }
 
     @Test
-    @DisplayName("Fail when required fields are missing")
-    void failsWhenRequiredFieldsAreMissing() throws Exception {
-        OAIRecordMetadata metadata = new OAIRecordMetadata("oai:test:2");
-        metadata.addFieldOcurrence("dc.title", "Sin autores");
+    @DisplayName("Keep the author when no publication year can be extracted")
+    void omitsUnparseableYear() throws Exception {
+        var metadata = new OAIRecordMetadata("oai:test:undated");
+        metadata.addFieldOcurrence("dc.title", "Sin fecha");
+        metadata.addFieldOcurrence("dc.creator", "Ada");
+        metadata.addFieldOcurrence("dc.date.issued", "s. f.");
 
+        var result = service.buildMinimalMetadata("oai:test:undated", metadata, "https://example.org");
+
+        assertEquals(List.of("Ada"), result.get("authors"));
+        assertFalse(result.containsKey("year"));
+    }
+
+    @Test
+    @DisplayName("Keep the publication year when authors are absent")
+    void omitsMissingAuthors() throws Exception {
+        var metadata = baseMetadata("oai:test:anonymous");
+        var result = service.buildMinimalMetadata("oai:test:anonymous", metadata, "https://example.org");
+
+        assertEquals(2026, result.get("year"));
+        assertFalse(result.containsKey("authors"));
+    }
+
+    @Test
+    @DisplayName("Require a title with text")
+    void rejectsMissingOrBlankTitle() throws Exception {
+        var metadata = new OAIRecordMetadata("oai:test:untitled");
         assertThrows(IllegalArgumentException.class,
-                () -> service.buildMinimalMetadata("oai:test:2", metadata, "https://example.org"));
+                () -> service.buildMinimalMetadata("oai:test:untitled", metadata, "https://example.org"));
+
+        metadata.addFieldOcurrence("dc.title", "  ");
+        assertThrows(IllegalArgumentException.class,
+                () -> service.buildMinimalMetadata("oai:test:untitled", metadata, "https://example.org"));
     }
 
     private OAIRecordMetadata baseMetadata(String id) throws Exception {

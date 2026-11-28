@@ -76,9 +76,10 @@ def stage_ark(ark):
     authority_error = validate_authority(payload)
     if authority_error:
         return authority_error
-    minimal = payload.get("minimal_metadata") or {}
-    if not minimal.get("title") or not minimal.get("authors") or minimal.get("year") is None:
-        return error("minimal_metadata requires title, authors and year")
+    minimal = payload.get("minimal_metadata")
+    title = minimal.get("title") if isinstance(minimal, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        return error("minimal_metadata requires a nonblank title", 422)
 
     record.update({
         "state": "D",

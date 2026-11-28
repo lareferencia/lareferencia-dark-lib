@@ -456,14 +456,14 @@ class DarkStageWorkerTest {
     @Test
     @DisplayName("Persist and retry preparation errors on subsequent pages")
     void retriesPreparationErrors() throws Exception {
-        OAIRecord record = OAIRecord.create("oai:test:no-author", null, "hash-no-author", false);
-        when(metadataStore.getMetadata(any(), eq("hash-no-author"))).thenReturn("<metadata/>");
+        OAIRecord record = OAIRecord.create("oai:test:no-title", null, "hash-no-title", false);
+        when(metadataStore.getMetadata(any(), eq("hash-no-title"))).thenReturn("<metadata/>");
         when(darkOriginalMetadataTransformerService.transformForMinter(any(), any(), any(), any(), any()))
                 .thenReturn("<metadata/>");
-        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/no-author");
+        when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/no-title");
         when(level1MetadataService.buildMinimalMetadata(any(), any(), any()))
-                .thenThrow(new IllegalArgumentException("Missing dc.creator and dc.contributor.author"));
-        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:no-author")))
+                .thenThrow(new IllegalArgumentException("Missing dc.title"));
+        when(darkTrackingRepository.findById(DarkTrackingRecordId.of("12345", "oai:test:no-title")))
                 .thenReturn(Optional.empty());
 
         worker.prePage();
@@ -567,7 +567,7 @@ class DarkStageWorkerTest {
                 .thenReturn("<metadata/>");
         when(urlExtractionService.extractBestUrl(any())).thenReturn("https://example.org/systemic");
         when(level1MetadataService.buildMinimalMetadata(any(), any(), any()))
-                .thenThrow(new IllegalArgumentException("Missing dc.creator and dc.contributor.author"));
+                .thenThrow(new IllegalArgumentException("Missing dc.title"));
         when(darkTrackingRepository.findById(any(DarkTrackingRecordId.class))).thenReturn(Optional.empty());
 
         worker.prePage();

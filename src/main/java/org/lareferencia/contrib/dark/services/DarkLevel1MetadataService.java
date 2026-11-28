@@ -32,17 +32,12 @@ public class DarkLevel1MetadataService {
 
     public Map<String, Object> buildMinimalMetadata(String oaiId, OAIRecordMetadata metadata, String targetUrl) {
         String title = firstNonBlank(fieldOccurrences(metadata, "dc.title"))
-                .orElseThrow(() -> new IllegalArgumentException("Missing dc.title"));
+                .orElseThrow(() -> new DarkPreparationException(DarkPreparationException.Reason.MISSING_TITLE, "Missing dc.title"));
         List<String> authors = normalizeAuthors(fieldOccurrences(metadata, "dc.creator"));
         if (authors.isEmpty()) {
             authors = normalizeAuthors(fieldOccurrences(metadata, "dc.contributor.author"));
         }
-        if (authors.isEmpty()) {
-            throw new IllegalArgumentException("Missing dc.creator and dc.contributor.author");
-        }
-
-        Integer year = extractYear(dateOccurrences(metadata))
-                .orElseThrow(() -> new IllegalArgumentException("Missing parseable dc.date year"));
+        Integer year = extractYear(dateOccurrences(metadata)).orElse(null);
 
         return assemble(oaiId, metadata, targetUrl, title, authors, year,
                 firstNonBlank(fieldOccurrences(metadata, "dc.type")).orElse(null),
@@ -52,7 +47,7 @@ public class DarkLevel1MetadataService {
     /** The transformer owns source selection. Only title is required in the prepared working fields. */
     Map<String, Object> readTransformedMetadata(OAIRecordMetadata metadata, String targetUrl) {
         String title = firstNonBlank(metadata.getFieldOcurrences("dark.title"))
-                .orElseThrow(() -> new IllegalArgumentException("L1 transformer produced no dark.title"));
+                .orElseThrow(() -> new DarkPreparationException(DarkPreparationException.Reason.MISSING_TITLE, "L1 transformer produced no dark.title"));
         List<String> authors = normalizeAuthors(metadata.getFieldOcurrences("dark.author"));
         String rights = firstNonBlank(metadata.getFieldOcurrences("dark.rights")).orElse(null);
         // Include alternate identifiers declared in the metadata; the catalogue ID identifies the transport item.
