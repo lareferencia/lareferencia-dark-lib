@@ -18,9 +18,9 @@ import org.lareferencia.contrib.dark.services.DarkLevel1MetadataService;
 import org.lareferencia.contrib.dark.services.DarkErrorCodec;
 import org.lareferencia.contrib.dark.services.DarkAttemptTracking;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
-import org.lareferencia.contrib.dark.services.DarkOriginalMetadataTransformerService;
+import org.lareferencia.contrib.dark.services.DarkStagePayloadService;
 import org.lareferencia.contrib.dark.services.DarkProperties;
-import org.lareferencia.contrib.dark.services.UrlExtractionService;
+import org.lareferencia.core.worker.validation.ITransformer;
 import org.lareferencia.core.metadata.IMetadataStore;
 import org.lareferencia.core.metadata.ISnapshotStore;
 import org.lareferencia.core.metadata.OAIRecordMetadata;
@@ -70,9 +70,6 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     private DarkProperties darkProperties;
 
     @Autowired
-    private UrlExtractionService urlExtractionService;
-
-    @Autowired
     private DarkLevel1MetadataService level1MetadataService;
 
     @Autowired
@@ -88,7 +85,9 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     private SnapshotLogService snapshotLogService;
 
     @Autowired
-    private DarkOriginalMetadataTransformerService darkOriginalMetadataTransformerService;
+    private DarkStagePayloadService payloads;
+
+    private ITransformer l1Profile;
 
     private final DarkErrorCodec darkErrorCodec = new DarkErrorCodec();
 
@@ -163,6 +162,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         }
 
         snapshotMetadata = snapshotStore.getSnapshotMetadata(snapshotId);
+        Long profileId = darkProperties.getL1TransformerId();
+        l1Profile = payloads.loadProfile(profileId);
         Package workerPackage = DarkStageWorker.class.getPackage();
         String implementationVersion = workerPackage != null ? workerPackage.getImplementationVersion() : null;
         String codeSource = DarkStageWorker.class.getProtectionDomain() != null
@@ -182,7 +183,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                 currentSourceMetadataSchema,
                 currentTargetMetadataSchema,
                 !currentSourceMetadataSchema.equals(currentTargetMetadataSchema),
-                DarkLevel1MetadataService.MAPPING_VERSION,
+                profileId == null ? DarkLevel1MetadataService.MAPPING_VERSION : "transformer-" + profileId,
                 implementationVersion != null ? implementationVersion : "unknown",
                 codeSource));
         List<String> selectedOaiIds = runningContext instanceof DarkManualRunningContext manualContext
@@ -308,32 +309,14 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
 
     private DarkStageCandidate prepareStageCandidate(OAIRecord record, DarkTrackingRecord existingRecord) throws Exception {
         String originalMetadata = metadataStore.getMetadata(snapshotMetadata, record.getOriginalMetadataHash());
-        String metadataForMinter = darkOriginalMetadataTransformerService.transformForMinter(
-                record.getIdentifier(),
-                record.getDatestamp(),
-                originalMetadata,
-                currentSourceMetadataSchema,
-                currentTargetMetadataSchema);
-        String extractionMetadata = selectXoaiMetadata(originalMetadata, metadataForMinter);
-        OAIRecordMetadata metadata = new OAIRecordMetadata(record.getIdentifier(), extractionMetadata);
-        String targetUrl = urlExtractionService.extractBestUrl(metadata);
-        if (targetUrl == null || targetUrl.isBlank()) {
-            throw new IllegalStateException("No target URL could be extracted");
-        }
-
-        Map<String, Object> minimalMetadata = level1MetadataService.buildMinimalMetadata(
-                record.getIdentifier(),
-                metadata,
-                targetUrl);
-        String stagePayloadHash = calculateStagePayloadHash(metadataForMinter, minimalMetadata, targetUrl);
+        StageArkRequest request = payloads.prepare(l1Profile, snapshotMetadata, record, originalMetadata,
+                currentSourceMetadataSchema, currentTargetMetadataSchema);
 
         return DarkStageCandidate.builder()
                 .oaiId(record.getIdentifier())
                 .sourceMetadataHash(record.getOriginalMetadataHash())
-                .stagePayloadHash(stagePayloadHash)
-                .targetUrl(targetUrl)
-                .originalMetadata(metadataForMinter)
-                .minimalMetadata(minimalMetadata)
+                .stagePayloadHash(calculateStagePayloadHash(request))
+                .request(request)
                 .existingRecord(existingRecord)
                 .ark(existingRecord != null ? existingRecord.getArk() : null)
                 .build();
@@ -431,7 +414,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
     private DarkAttemptTracking.Batch attempt(List<DarkStageCandidate> candidates) {
         var items = candidates.stream().map(candidate -> new DarkAttemptTracking.Item(
                 candidate.getOaiId(), candidate.getArk(), candidate.getStagePayloadHash(), candidate.getSourceMetadataHash(),
-                candidate.getTargetUrl(), runningContext.getNetwork().getId(), snapshotMetadata.getSnapshotId())).toList();
+                candidate.getRequest().getTarget(), runningContext.getNetwork().getId(), snapshotMetadata.getSnapshotId())).toList();
         return new DarkAttemptTracking.Batch(currentArkNaan, items);
     }
 
@@ -587,17 +570,8 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
                         && !manualStageAllowed(candidate)) {
                     continue;
                 }
-                StageArkRequest request = StageArkRequest.builder()
-                        .authorityId(darkProperties.getAuthorityId())
-                        .target(candidate.getTargetUrl())
-                        .minimalMetadata(candidate.getMinimalMetadata())
-                        .originalMetadata(candidate.getOriginalMetadata())
-                        .metadataSchema(darkProperties.getMetadataSchema())
-                        .metadataMediaType(darkProperties.getMetadataMediaType())
-                        .build();
-
                 logger.debug("DARK stage sending metadata for record {} to ARK {}", candidate.getOaiId(), ark);
-                ARKResponse response = darkMinterClient.stageArk(ark, request, attempt(List.of(candidate)));
+                ARKResponse response = darkMinterClient.stageArk(ark, candidate.getRequest(), attempt(List.of(candidate)));
                 stageSubmitted = true;
                 validateStageResponse(candidate, response);
                 persistSuccess(candidate, response);
@@ -687,7 +661,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setOaiId(candidate.getOaiId());
         record.setArk(candidate.getArk());
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setTargetUrl(candidate.getTargetUrl());
+        record.setTargetUrl(candidate.getRequest().getTarget());
         record.setState(DarkTrackingState.RESERVED);
         record.setLastError(null);
         darkTrackingRepository.save(record);
@@ -702,7 +676,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
         record.setStagePayloadHash(candidate.getStagePayloadHash());
-        record.setTargetUrl(candidate.getTargetUrl());
+        record.setTargetUrl(candidate.getRequest().getTarget());
         record.setState(response.getState().toTrackingState());
         record.setLastError(null);
         record.setLastStagedAt(LocalDateTime.now());
@@ -726,7 +700,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArk(candidate.getArk());
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setTargetUrl(candidate.getTargetUrl());
+        record.setTargetUrl(candidate.getRequest().getTarget());
         record.setState(DarkTrackingState.ERROR);
         record.setLastError(error);
         darkTrackingRepository.save(record);
@@ -742,7 +716,7 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         record.setArk(candidate.getArk());
         applySourceProvenance(record);
         record.setSourceMetadataHash(candidate.getSourceMetadataHash());
-        record.setTargetUrl(candidate.getTargetUrl());
+        record.setTargetUrl(candidate.getRequest().getTarget());
         record.setState(retryableFailureState(candidate));
         record.setLastError(error);
         darkTrackingRepository.save(record);
@@ -803,34 +777,18 @@ public class DarkStageWorker extends BaseBatchWorker<OAIRecord, NetworkRunningCo
         }
     }
 
-    private String calculateStagePayloadHash(
-            String originalMetadata,
-            Map<String, Object> minimalMetadata,
-            String targetUrl) throws Exception {
+    private String calculateStagePayloadHash(StageArkRequest request) throws Exception {
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("mappingVersion", DarkLevel1MetadataService.MAPPING_VERSION);
         payload.put("sourceSchema", currentSourceMetadataSchema);
-        payload.put("targetSchema", currentTargetMetadataSchema);
-        payload.put("metadataMediaType", darkProperties.getMetadataMediaType());
-        payload.put("targetUrl", targetUrl);
-        payload.put("minimalMetadata", minimalMetadata);
-        payload.put("originalMetadata", originalMetadata);
+        payload.put("targetSchema", request.getMetadataSchema());
+        payload.put("metadataMediaType", request.getMetadataMediaType());
+        payload.put("targetUrl", request.getTarget());
+        payload.put("minimalMetadata", request.getMinimalMetadata());
+        payload.put("originalMetadata", request.getOriginalMetadata());
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(PAYLOAD_MAPPER.writeValueAsString(payload).getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(digest);
-    }
-
-    private String selectXoaiMetadata(String sourceMetadata, String transformedMetadata) {
-        if ("xoai".equalsIgnoreCase(currentSourceMetadataSchema)) {
-            return sourceMetadata;
-        }
-        if ("xoai".equalsIgnoreCase(currentTargetMetadataSchema)) {
-            return transformedMetadata;
-        }
-        throw new IllegalStateException(
-                "Level 1 extraction requires XOAI source or target metadata schema"
-                        + " (source=" + currentSourceMetadataSchema
-                        + ", target=" + currentTargetMetadataSchema + ")");
     }
 
     private boolean hasSystemicPreparationFailure() {

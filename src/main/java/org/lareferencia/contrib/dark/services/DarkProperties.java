@@ -54,6 +54,9 @@ public class DarkProperties {
         }
         if (runtimeStage.has("metadataSchema")) setMetadataSchema(runtimeStage.path("metadataSchema").asText());
         if (runtimeStage.has("metadataMediaType")) setMetadataMediaType(runtimeStage.path("metadataMediaType").asText());
+        if (runtimeStage.has("l1TransformerId"))
+            ensureStage().setL1TransformerId(runtimeStage.hasNonNull("l1TransformerId")
+                    ? runtimeStage.get("l1TransformerId").longValue() : null);
         if (runtimeStage.has("pageSize")) setStagePageSize(runtimeStage.path("pageSize").asInt());
         if (runtimeStage.has("maxPagesPerRun")) setStageMaxPagesPerRun(runtimeStage.path("maxPagesPerRun").asInt());
         if (runtimeStage.has("reserveBatchSize")) setReserveBatchSize(runtimeStage.path("reserveBatchSize").asInt());
@@ -141,6 +144,7 @@ public class DarkProperties {
     public static class Stage {
         private int pageSize = 100;
         private int maxPagesPerRun = 0;
+        private volatile Long l1TransformerId;
     }
 
     @Getter
@@ -157,6 +161,10 @@ public class DarkProperties {
 
     public int getStagePageSize() {
         return stage != null ? Math.max(1, stage.getPageSize()) : 100;
+    }
+
+    public Long getL1TransformerId() {
+        return stage == null ? null : stage.getL1TransformerId();
     }
 
     public void setStagePageSize(int stagePageSize) {

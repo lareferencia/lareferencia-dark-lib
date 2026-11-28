@@ -1,0 +1,231 @@
+{
+  "format": "lareferencia-harvester-configuration",
+  "version": 1,
+  "kind": "transformer",
+  "configuration": {
+    "name": "dARK L1 · Base v1",
+    "description": "Prepara título, autores, año, tipo y derechos para dARK a partir de una copia del registro XOAI.",
+    "rules": [
+      {
+        "name": "Reunir títulos, primero el principal",
+        "runOrder": 10,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameBulkTranslateRule",
+        "configuration": {
+          "translationArray": [
+            {
+              "search": "dc.title",
+              "replace": "dark.title"
+            },
+            {
+              "search": "dc.title.none",
+              "replace": "dark.title"
+            },
+            {
+              "search": "dc.title.*",
+              "replace": "dark.title"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Descartar títulos en blanco",
+        "runOrder": 20,
+        "className": "org.lareferencia.core.worker.validation.transformer.RemoveEmptyOccrsRule",
+        "configuration": {
+          "fieldName": "dark.title"
+        }
+      },
+      {
+        "name": "Conservar el primer título",
+        "runOrder": 30,
+        "className": "org.lareferencia.core.worker.validation.transformer.RemoveAllButFirstOccrRule",
+        "configuration": {
+          "fieldName": "dark.title"
+        }
+      },
+      {
+        "name": "Reunir autorías explícitas",
+        "runOrder": 40,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameBulkTranslateRule",
+        "configuration": {
+          "translationArray": [
+            {
+              "search": "dc.creator",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.creator.none",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.creator.author",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.creator.author.*",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.contributor.author",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.contributor.author.*",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.contributor.corpauthor",
+              "replace": "dark.author"
+            },
+            {
+              "search": "dc.contributor.corpauthor.*",
+              "replace": "dark.author"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Agrupar fechas por su significado",
+        "runOrder": 50,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameBulkTranslateRule",
+        "configuration": {
+          "translationArray": [
+            {
+              "search": "dc.date.issued",
+              "replace": "dark.year.issued"
+            },
+            {
+              "search": "dc.date.issued.*",
+              "replace": "dark.year.issued"
+            },
+            {
+              "search": "dc.date.created",
+              "replace": "dark.year.created"
+            },
+            {
+              "search": "dc.date.created.*",
+              "replace": "dark.year.created"
+            },
+            {
+              "search": "dc.date",
+              "replace": "dark.year.generic"
+            },
+            {
+              "search": "dc.date.none",
+              "replace": "dark.year.generic"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Traducir tipos DRIVER conocidos a COAR",
+        "runOrder": 60,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldContentTranslateRule",
+        "configuration": {
+          "testFieldName": "dc.type.driver",
+          "writeFieldName": "dark.type.mapped",
+          "replaceOccurrence": false,
+          "testValueAsPrefix": false,
+          "translationArray": [
+            {
+              "search": "info:eu-repo/semantics/bachelorThesis",
+              "replace": "http://purl.org/coar/resource_type/c_7a1f"
+            },
+            {
+              "search": "info:eu-repo/semantics/doctoralThesis",
+              "replace": "http://purl.org/coar/resource_type/c_db06"
+            },
+            {
+              "search": "info:eu-repo/semantics/book",
+              "replace": "http://purl.org/coar/resource_type/c_2f33"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Reunir tipos declarados y literales",
+        "runOrder": 70,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameBulkTranslateRule",
+        "configuration": {
+          "translationArray": [
+            {
+              "search": "dc.type.coar",
+              "replace": "dark.type.declared"
+            },
+            {
+              "search": "dc.type.coar.*",
+              "replace": "dark.type.declared"
+            },
+            {
+              "search": "dc.type",
+              "replace": "dark.type.literal"
+            },
+            {
+              "search": "dc.type.none",
+              "replace": "dark.type.literal"
+            },
+            {
+              "search": "dc.type.driver",
+              "replace": "dark.type.literal"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Recoger otros calificadores locales del tipo",
+        "runOrder": 80,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameConditionalTranslateRule",
+        "configuration": {
+          "processAllOccurrences": true,
+          "targetFieldName": "dark.type.literal",
+          "sourceXPathExpression": "/*[local-name()='metadata']/*[local-name()='element' and @name='dc']/*[local-name()='element' and @name='type']/*[local-name()='element' and not(contains(translate(@name,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'version'))]//*[local-name()='field' and @name='value' and normalize-space(.)!='' and not(contains(.,'/version/')) and not(contains(.,'Version'))]"
+        }
+      },
+      {
+        "name": "Reunir derechos, priorizando URI",
+        "runOrder": 90,
+        "className": "org.lareferencia.core.worker.validation.transformer.FieldNameBulkTranslateRule",
+        "configuration": {
+          "translationArray": [
+            {
+              "search": "dc.rights.uri",
+              "replace": "dark.rights"
+            },
+            {
+              "search": "dc.rights.uri.*",
+              "replace": "dark.rights"
+            },
+            {
+              "search": "dc.rights",
+              "replace": "dark.rights"
+            },
+            {
+              "search": "dc.rights.none",
+              "replace": "dark.rights"
+            },
+            {
+              "search": "dc.rights.*",
+              "replace": "dark.rights"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Descartar derechos en blanco",
+        "runOrder": 100,
+        "className": "org.lareferencia.core.worker.validation.transformer.RemoveEmptyOccrsRule",
+        "configuration": {
+          "fieldName": "dark.rights"
+        }
+      },
+      {
+        "name": "Conservar el primer valor de derechos",
+        "runOrder": 110,
+        "className": "org.lareferencia.core.worker.validation.transformer.RemoveAllButFirstOccrRule",
+        "configuration": {
+          "fieldName": "dark.rights"
+        }
+      }
+    ]
+  }
+}

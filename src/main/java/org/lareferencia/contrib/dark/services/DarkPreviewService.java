@@ -1,41 +1,42 @@
 package org.lareferencia.contrib.dark.services;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.lareferencia.contrib.dark.client.StageArkRequest;
+import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
 import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 import org.lareferencia.contrib.dark.worker.CatalogRecordPaginator;
 import org.lareferencia.core.domain.Network;
 import org.lareferencia.core.metadata.IMetadataStore;
-import org.lareferencia.core.metadata.OAIRecordMetadata;
 import org.lareferencia.core.metadata.ISnapshotStore;
 import org.lareferencia.core.metadata.SnapshotMetadata;
 import org.lareferencia.core.repository.catalog.CatalogDatabaseManager;
 import org.lareferencia.core.repository.catalog.OAIRecord;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashSet;
-import org.lareferencia.contrib.dark.domain.DarkTrackingRecord;
-import org.lareferencia.contrib.dark.repositories.DarkTrackingRepository;
 
 /** Synchronous, minter-free payload preview for an explicit selection. */
 @Service
 public class DarkPreviewService {
+    private static final ObjectMapper JSON = new ObjectMapper();
     private final ISnapshotStore snapshots;
     private final CatalogDatabaseManager catalog;
     private final IMetadataStore metadataStore;
     private final DarkProperties properties;
-    private final DarkOriginalMetadataTransformerService transformer;
-    private final DarkLevel1MetadataService level1;
-    private final UrlExtractionService urls;
+    private final DarkStagePayloadService payloads;
     private final DarkTrackingRepository tracking;
 
     public DarkPreviewService(ISnapshotStore snapshots, CatalogDatabaseManager catalog, IMetadataStore metadataStore,
-            DarkProperties properties, DarkOriginalMetadataTransformerService transformer,
-            DarkLevel1MetadataService level1, UrlExtractionService urls, DarkTrackingRepository tracking) {
-        this.snapshots = snapshots; this.catalog = catalog; this.metadataStore = metadataStore;
-        this.properties = properties; this.transformer = transformer; this.level1 = level1; this.urls = urls;
+            DarkProperties properties, DarkStagePayloadService payloads, DarkTrackingRepository tracking) {
+        this.snapshots = snapshots;
+        this.catalog = catalog;
+        this.metadataStore = metadataStore;
+        this.properties = properties;
+        this.payloads = payloads;
         this.tracking = tracking;
     }
 
@@ -53,6 +54,8 @@ public class DarkPreviewService {
         }
         SnapshotMetadata snapshot = snapshots.getSnapshotMetadata(snapshotId);
         String sourceSchema = network.getMetadataStoreSchema();
+        String targetSchema = properties.getMetadataSchema();
+        var profile = payloads.loadProfile(properties.getL1TransformerId());
         List<PreviewItem> result = new ArrayList<>();
         CatalogRecordPaginator paginator = new CatalogRecordPaginator(snapshot, catalog, oaiIds);
         paginator.setPageSize(Math.max(100, oaiIds.size()));
@@ -63,20 +66,16 @@ public class DarkPreviewService {
                 found.add(record.getIdentifier());
                 try {
                     String original = metadataStore.getMetadata(snapshot, record.getOriginalMetadataHash());
-                    String transformed = transformer.transformForMinter(record.getIdentifier(), record.getDatestamp(), original,
-                            sourceSchema, properties.getMetadataSchema());
-                    String extraction = "xoai".equalsIgnoreCase(sourceSchema) ? original : transformed;
-                    OAIRecordMetadata metadata = new OAIRecordMetadata(record.getIdentifier(), extraction);
-                    String targetUrl = urls.extractBestUrl(metadata);
-                    if (targetUrl == null || targetUrl.isBlank()) throw new IllegalArgumentException("No target URL could be extracted");
-                    Map<String, Object> minimal = level1.buildMinimalMetadata(record.getIdentifier(), metadata, targetUrl);
+                    StageArkRequest request = payloads.prepare(profile, snapshot, record, original, sourceSchema, targetSchema);
+                    String transformed = request.getOriginalMetadata();
+                    Map<String, Object> minimal = request.getMinimalMetadata();
                     DarkTrackingRecord current = naan == null ? null : tracking.findByIdArkNaanAndIdOaiId(naan, record.getIdentifier()).orElse(null);
-                    int l1Bytes = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsBytes(minimal).length;
+                    int l1Bytes = JSON.writeValueAsBytes(minimal).length;
                     int l2Bytes = transformed == null ? 0 : transformed.getBytes(StandardCharsets.UTF_8).length;
-                    int payloadBytes = l1Bytes + l2Bytes + targetUrl.getBytes(StandardCharsets.UTF_8).length;
+                    int payloadBytes = JSON.writeValueAsBytes(request).length;
                     result.add(new PreviewItem(record.getIdentifier(), current == null ? null : current.getArk(),
                             current == null || current.getState() == null ? null : current.getState().name(), true, null,
-                            targetUrl, l1Bytes, l2Bytes, payloadBytes, List.of(), minimal, transformed));
+                            request.getTarget(), l1Bytes, l2Bytes, payloadBytes, List.of(), minimal, transformed));
                 } catch (Exception e) {
                     result.add(PreviewItem.error(record.getIdentifier(), null, null, "VALIDATION", bounded(e.getMessage())));
                 }

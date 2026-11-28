@@ -11,6 +11,16 @@ into harvested records.
 Level 1 authors are read from `dc.creator`, with `dc.contributor.author` as a
 fallback. Values formatted as `Name|||ORCID` are sent as `Name`.
 
+### Elegir el transformador L1
+
+Importa [dARK L1 · Base v1](src/main/resources/transformers/dark-l1-base-v1.json) desde **Transformadores** en el admin. Abre **Identificadores dARK → Configuración del minter**, pulsa **Editar**, elige el **Transformador L1** y guarda. También puedes clonar la plantilla y ajustar las reglas a los metadatos de tu instalación. La opción de mapeo integrado conserva el comportamiento de las instalaciones anteriores.
+
+La vista previa y el envío aplican las mismas reglas a una copia XOAI del registro de origen. El XML L2 y el identificador de seguimiento se conservan. El perfil base recoge título, autorías explícitas, fechas, tipo y derechos. El único campo bibliográfico obligatorio del perfil es un título con contenido. Las fechas se evalúan por orden de publicación, creación y fecha genérica. Si el grupo elegido contiene años distintos, se omite el año. El tipo admite una URI COAR, una equivalencia conocida o un literal local.
+
+Las reglas de un transformador elegido deben escribir el título en `dark.title`. Para personalizar la plantilla, las autorías van en `dark.author` y los derechos en `dark.rights`. Las reglas de fecha agrupan los valores en `dark.year.issued`, `dark.year.created` y `dark.year.generic`. Las de tipo usan `dark.type.declared` para un concepto COAR de origen, `dark.type.mapped` para una equivalencia del diccionario y `dark.type.literal` para el texto del repositorio.
+
+La petición al minter también requiere autoridad, URL de destino y XML L2. Para publicar un L1 sin autor o año, el minter y el resolver de destino deben admitir esos campos ausentes. La vista previa puede comprobarse antes de habilitar la publicación en ese destino.
+
 The worker settings use nested configuration:
 
 ```properties

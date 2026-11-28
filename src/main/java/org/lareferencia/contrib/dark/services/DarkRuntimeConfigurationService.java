@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.lareferencia.contrib.dark.domain.DarkRuntimeConfiguration;
 import org.lareferencia.contrib.dark.repositories.DarkRuntimeConfigurationRepository;
+import org.lareferencia.core.domain.Transformer;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -18,6 +22,8 @@ import jakarta.annotation.PostConstruct;
 public class DarkRuntimeConfigurationService {
     public static final long CONFIGURATION_ID = 1L;
     private final DarkRuntimeConfigurationRepository repository;
+    @PersistenceContext
+    private EntityManager entityManager;
     private final ObjectMapper mapper;
     private final DarkProperties properties;
     private final TransactionTemplate transactions;
@@ -42,6 +48,9 @@ public class DarkRuntimeConfigurationService {
         synchronized (properties) {
             DarkRuntimeConfiguration row = repository.findById(CONFIGURATION_ID).orElse(null);
             ObjectNode value = row == null || row.getConfiguration() == null ? (ObjectNode) defaults() : (ObjectNode) row.getConfiguration().deepCopy();
+            ObjectNode stage = object(value, "stage");
+            if (!stage.has("l1TransformerId")) stage.put("l1TransformerId", properties.getL1TransformerId());
+            value.set("stage", stage);
             ObjectNode auth = authentication(value);
             auth.put("storageRoot", properties.getKeyStorageRoot());
             ((ObjectNode) value.path("client")).set("authentication", auth);
@@ -53,7 +62,10 @@ public class DarkRuntimeConfigurationService {
         synchronized (properties) {
             validate(value);
             ObjectNode next = (ObjectNode) value.deepCopy();
-            ObjectNode currentAuth = authentication((ObjectNode) get());
+            ObjectNode current = (ObjectNode) get();
+            ObjectNode currentAuth = authentication(current);
+            ObjectNode stage = (ObjectNode) next.path("stage");
+            if (!stage.has("l1TransformerId")) stage.set("l1TransformerId", current.at("/stage/l1TransformerId"));
             ObjectNode client = (ObjectNode) next.path("client");
             if (client.has("authentication") && !client.path("authentication").isObject())
                 throw new IllegalArgumentException("client.authentication must be an object");
@@ -106,6 +118,10 @@ public class DarkRuntimeConfigurationService {
 
     private JsonNode save(ObjectNode next, String updatedBy) {
         transactions.executeWithoutResult(status -> {
+            // Keep selection and deletion from passing their checks concurrently.
+            JsonNode selected = next.at("/stage/l1TransformerId");
+            if (selected.isIntegralNumber() && entityManager.find(Transformer.class, selected.longValue(), LockModeType.PESSIMISTIC_READ) == null)
+                throw new IllegalArgumentException("The selected L1 transformer does not exist: " + selected);
             DarkRuntimeConfiguration row = repository.findById(CONFIGURATION_ID).orElseGet(DarkRuntimeConfiguration::new);
             row.setId(CONFIGURATION_ID);
             row.setConfiguration(next.deepCopy());
@@ -114,6 +130,17 @@ public class DarkRuntimeConfigurationService {
         });
         apply(next);
         return next.deepCopy();
+    }
+
+    public boolean isL1TransformerSelected(Long id) {
+        JsonNode stage = repository.findById(CONFIGURATION_ID)
+                .map(DarkRuntimeConfiguration::getConfiguration)
+                .map(config -> config.path("stage"))
+                .orElse(null);
+        if (stage != null && stage.has("l1TransformerId")) {
+            return stage.hasNonNull("l1TransformerId") && id.equals(stage.get("l1TransformerId").longValue());
+        }
+        return id.equals(properties.getL1TransformerId());
     }
 
     private ObjectNode authentication(ObjectNode root) {
@@ -158,6 +185,7 @@ public class DarkRuntimeConfigurationService {
         ArrayNode backoff = client.putArray("backoffSeconds");
         properties.getMinter().getRetry().getBackoffSeconds().forEach(backoff::add);
         ObjectNode stage = root.putObject("stage");
+        stage.put("l1TransformerId", properties.getL1TransformerId());
         stage.put("metadataSchema", properties.getMetadataSchema());
         stage.put("metadataMediaType", properties.getMetadataMediaType());
         stage.put("pageSize", properties.getStagePageSize());
@@ -187,5 +215,9 @@ public class DarkRuntimeConfigurationService {
         if (value.path("stage").path("pageSize").asInt(0) < 1 || value.path("reconcile").path("pageSize").asInt(0) < 1)
             throw new IllegalArgumentException("page sizes must be greater than zero");
         if (value.path("stage").path("reserveBatchSize").asInt(0) < 1) throw new IllegalArgumentException("stage.reserveBatchSize must be greater than zero");
+        JsonNode selected = value.at("/stage/l1TransformerId");
+        if (!selected.isMissingNode() && !selected.isNull()
+                && (!selected.isIntegralNumber() || !selected.canConvertToLong() || selected.longValue() < 1))
+            throw new IllegalArgumentException("stage.l1TransformerId must be a positive integer or null");
     }
 }

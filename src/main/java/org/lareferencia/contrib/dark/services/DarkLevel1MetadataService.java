@@ -22,6 +22,9 @@ public class DarkLevel1MetadataService {
     public static final String MAPPING_VERSION = "l1-v2";
 
     private static final Pattern YEAR_PATTERN = Pattern.compile("(?<!\\d)(\\d{4})(?!\\d)");
+    // A fractional second or numeric UTC offset can also contain four consecutive digits.
+    private static final Pattern ISO_TIME = Pattern.compile(
+            "(?i)(?<=\\d)[T ]\\d{2}:\\d{2}(?::\\d{2}(?:[.,]\\d+)?)?(?:Z|[+-]\\d{2}:?\\d{2})?");
     private static final Pattern DOI_PATTERN = Pattern.compile("(?i)(?:https?://(?:dx\\.)?doi\\.org/|doi:\\s*)?(10\\.\\d{4,9}/\\S+)");
     private static final Pattern HANDLE_URL_PATTERN = Pattern.compile(
             "(?i)https?://(?:(?:hdl\\.)?handle\\.net/|[^/]+/handle/)(\\S+)");
@@ -41,13 +44,30 @@ public class DarkLevel1MetadataService {
         Integer year = extractYear(dateOccurrences(metadata))
                 .orElseThrow(() -> new IllegalArgumentException("Missing parseable dc.date year"));
 
-        LinkedHashMap<String, Object> minimalMetadata = new LinkedHashMap<>();
-        minimalMetadata.put("title", title);
-        minimalMetadata.put("authors", authors);
-        minimalMetadata.put("year", year);
+        return assemble(oaiId, metadata, targetUrl, title, authors, year,
+                firstNonBlank(fieldOccurrences(metadata, "dc.type")).orElse(null),
+                firstNonBlank(fieldOccurrences(metadata, "dc.rights")).orElse(null));
+    }
 
+    /** The transformer owns source selection. Only title is required in the prepared working fields. */
+    Map<String, Object> readTransformedMetadata(OAIRecordMetadata metadata, String targetUrl) {
+        String title = firstNonBlank(metadata.getFieldOcurrences("dark.title"))
+                .orElseThrow(() -> new IllegalArgumentException("L1 transformer produced no dark.title"));
+        List<String> authors = normalizeAuthors(metadata.getFieldOcurrences("dark.author"));
+        String rights = firstNonBlank(metadata.getFieldOcurrences("dark.rights")).orElse(null);
+        // Include alternate identifiers declared in the metadata; the catalogue ID identifies the transport item.
+        return assemble(null, metadata, targetUrl, title, authors, transformedYear(metadata),
+                transformedType(metadata), rights);
+    }
+
+    private Map<String, Object> assemble(String oaiId, OAIRecordMetadata metadata, String targetUrl,
+            String title, List<String> authors, Integer year, String resourceType, String rights) {
+        Map<String, Object> minimalMetadata = new LinkedHashMap<>();
+        minimalMetadata.put("title", title);
+        if (!authors.isEmpty()) minimalMetadata.put("authors", authors);
+        putIfPresent(minimalMetadata, "year", year);
         putIfPresent(minimalMetadata, "publisher", firstNonBlank(fieldOccurrences(metadata, "dc.publisher")).orElse(null));
-        putIfPresent(minimalMetadata, "resource_type", firstNonBlank(fieldOccurrences(metadata, "dc.type")).orElse(null));
+        putIfPresent(minimalMetadata, "resource_type", resourceType);
         putIfPresent(minimalMetadata, "language", normalizeLanguage(firstNonBlank(fieldOccurrences(metadata, "dc.language")).orElse(null)));
         putIfPresent(minimalMetadata, "abstract", extractAbstract(metadata));
 
@@ -56,7 +76,7 @@ public class DarkLevel1MetadataService {
             minimalMetadata.put("subjects", subjects);
         }
 
-        putIfPresent(minimalMetadata, "rights", firstNonBlank(fieldOccurrences(metadata, "dc.rights")).orElse(null));
+        putIfPresent(minimalMetadata, "rights", rights);
 
         List<Map<String, String>> alternateIdentifiers = buildAlternateIdentifiers(oaiId, metadata, targetUrl);
         if (!alternateIdentifiers.isEmpty()) {
@@ -69,6 +89,52 @@ public class DarkLevel1MetadataService {
         }
 
         return minimalMetadata;
+    }
+
+    private Integer transformedYear(OAIRecordMetadata metadata) {
+        for (String field : List.of("dark.year.issued", "dark.year.created", "dark.year.generic")) {
+            Integer year = null;
+            for (String value : metadata.getFieldOcurrences(field)) {
+                Matcher matcher = YEAR_PATTERN.matcher(ISO_TIME.matcher(value).replaceAll(""));
+                while (matcher.find()) {
+                    int candidate = Integer.parseInt(matcher.group());
+                    if (candidate == 0) continue;
+                    if (year != null && year != candidate) return null;
+                    year = candidate;
+                }
+            }
+            if (year != null) return year;
+        }
+        return null;
+    }
+
+    private String transformedType(OAIRecordMetadata metadata) {
+        List<String> literals = dedupe(metadata.getFieldOcurrences("dark.type.literal"));
+        literals.addAll(dedupe(metadata.getFieldOcurrences("dark.type.declared")));
+        Set<String> declared = new LinkedHashSet<>();
+        for (String value : literals) {
+            if (isCoarType(value)) declared.add(canonicalType(value));
+        }
+        Set<String> mapped = new LinkedHashSet<>();
+        for (String value : dedupe(metadata.getFieldOcurrences("dark.type.mapped"))) {
+            mapped.add(canonicalType(value));
+        }
+
+        // When both sources contribute candidates, choose a concept only if they agree on exactly one.
+        Set<String> candidates = mapped.isEmpty() ? declared : mapped;
+        if (!mapped.isEmpty() && !declared.isEmpty()) candidates.retainAll(declared);
+        if (candidates.size() == 1) return candidates.iterator().next();
+        return literals.stream().filter(value -> !isCoarType(value)
+                && !value.contains("/coar/version/") && !value.endsWith("Version")).findFirst().orElse(null);
+    }
+
+    private boolean isCoarType(String value) {
+        return value.startsWith("http://purl.org/coar/resource_type/")
+                || value.startsWith("https://purl.org/coar/resource_type/");
+    }
+
+    private String canonicalType(String value) {
+        return value.startsWith("https://purl.org/coar/resource_type/") ? value.replace("https://", "http://") : value;
     }
 
     private List<Map<String, String>> buildAlternateIdentifiers(String oaiId, OAIRecordMetadata metadata, String targetUrl) {

@@ -17,6 +17,9 @@ import org.lareferencia.contrib.dark.services.DarkLevel1MetadataService;
 import org.lareferencia.contrib.dark.services.DarkNetworkSettingsResolver;
 import org.lareferencia.contrib.dark.services.DarkOriginalMetadataTransformerService;
 import org.lareferencia.contrib.dark.services.DarkProperties;
+import org.lareferencia.contrib.dark.services.DarkStagePayloadService;
+import org.lareferencia.contrib.dark.services.DarkL1TransformerService;
+import org.lareferencia.contrib.dark.client.StageArkRequest;
 import org.lareferencia.contrib.dark.services.UrlExtractionService;
 import org.lareferencia.core.domain.Network;
 import org.lareferencia.core.metadata.IMetadataStore;
@@ -87,6 +90,9 @@ class DarkStageWorkerTest {
         properties.setMetadataSchema("dublin_core");
         properties.setReserveBatchSize(100);
         ReflectionTestUtils.setField(worker, "darkProperties", properties);
+        ReflectionTestUtils.setField(worker, "payloads", new DarkStagePayloadService(properties,
+                darkOriginalMetadataTransformerService, urlExtractionService, level1MetadataService,
+                mock(DarkL1TransformerService.class)));
         ReflectionTestUtils.setField(worker, "snapshotMetadata", mockSnapshot());
         ReflectionTestUtils.setField(worker, "currentArkNaan", "12345");
         ReflectionTestUtils.setField(worker, "currentSourceMetadataSchema", "xoai");
@@ -222,12 +228,7 @@ class DarkStageWorkerTest {
         trackingRecord.setArkNaan("12345");
         trackingRecord.setArk("ark:12345/existing");
         trackingRecord.setSourceMetadataHash("hash-2");
-        trackingRecord.setStagePayloadHash(ReflectionTestUtils.invokeMethod(
-                worker,
-                "calculateStagePayloadHash",
-                "<metadata/>",
-                minimalMetadata,
-                "https://example.org/resource/2"));
+        trackingRecord.setStagePayloadHash(hashFor(minimalMetadata, "https://example.org/resource/2"));
         trackingRecord.setTargetUrl("https://example.org/resource/2");
         trackingRecord.setState(DarkTrackingState.DRAFT);
 
@@ -509,10 +510,8 @@ class DarkStageWorkerTest {
     @DisplayName("Stage payload hash changes when derived target changes")
     void payloadHashIncludesDerivedTarget() {
         Map<String, Object> metadata = Map.of("title", "Demo", "authors", List.of("Ada"), "year", 2026);
-        String first = ReflectionTestUtils.invokeMethod(
-                worker, "calculateStagePayloadHash", "<metadata/>", metadata, "https://example.org/one");
-        String second = ReflectionTestUtils.invokeMethod(
-                worker, "calculateStagePayloadHash", "<metadata/>", metadata, "https://example.org/two");
+        String first = hashFor(metadata, "https://example.org/one");
+        String second = hashFor(metadata, "https://example.org/two");
 
         assertNotEquals(first, second);
     }
@@ -538,6 +537,12 @@ class DarkStageWorkerTest {
         verify(darkMinterClient, never()).reserveBatch(any(), any());
         verify(darkMinterClient, never()).stageArk(any(), any(), any());
         verify(darkTrackingRepository, times(20)).save(any(DarkTrackingRecord.class));
+    }
+
+    private String hashFor(Map<String, Object> metadata, String target) {
+        var request = StageArkRequest.builder().originalMetadata("<metadata/>").minimalMetadata(metadata)
+                .target(target).metadataSchema("dublin_core").metadataMediaType(properties.getMetadataMediaType()).build();
+        return ReflectionTestUtils.invokeMethod(worker, "calculateStagePayloadHash", request);
     }
 
     private SnapshotMetadata mockSnapshot() {

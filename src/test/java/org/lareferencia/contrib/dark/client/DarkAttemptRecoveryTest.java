@@ -217,11 +217,12 @@ class DarkAttemptRecoveryTest {
         setField(worker, "metadataStore", metadata);
         var transform = mock(DarkOriginalMetadataTransformerService.class);
         when(transform.transformForMinter(any(), any(), any(), any(), any())).thenReturn("<metadata/>");
-        setField(worker, "darkOriginalMetadataTransformerService", transform);
         var urls = mock(UrlExtractionService.class);
         when(urls.extractBestUrl(any())).thenReturn("https://example.org/item");
-        setField(worker, "urlExtractionService", urls);
-        setField(worker, "level1MetadataService", mock(DarkLevel1MetadataService.class));
+        var level1 = mock(DarkLevel1MetadataService.class);
+        setField(worker, "level1MetadataService", level1);
+        setField(worker, "payloads", new DarkStagePayloadService(properties, transform, urls, level1,
+                mock(DarkL1TransformerService.class)));
         var item = OAIRecord.create(OAI, null, "source-hash", false);
         new TransactionTemplate(transactions).executeWithoutResult(page -> {
             worker.prePage();
